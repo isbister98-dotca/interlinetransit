@@ -21,8 +21,12 @@ export function useVehicles() {
     }
   );
 
+  const filtered = (data ?? []).filter(
+    (v) => v.routeId && v.routeId !== "?" && v.routeLabel && v.routeLabel !== "?"
+  );
+
   return {
-    vehicles: data ?? [],
+    vehicles: filtered,
     isLoading: !ready || isLoading,
     error,
   };
