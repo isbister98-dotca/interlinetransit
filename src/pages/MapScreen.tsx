@@ -28,19 +28,20 @@ function createVehicleIcon(vehicle: Vehicle) {
       display: flex;
       align-items: center;
       gap: 4px;
-      background: hsla(${color}, 0.92);
-      color: hsl(var(--background));
+      background: hsl(${color} / 0.92);
+      color: #0e0f0d;
       font-size: 10px;
       font-weight: 700;
       font-family: 'DM Mono', monospace;
       padding: 3px 7px 3px 5px;
       border-radius: 8px;
       white-space: nowrap;
-      box-shadow: 0 2px 10px hsla(${color}, 0.5);
-      border: 1.5px solid hsla(${color}, 1);
+      box-shadow: 0 2px 10px hsl(${color} / 0.5);
+      border: 1.5px solid hsl(${color});
+      pointer-events: auto;
     ">${icon}<span>${vehicle.routeId}</span></div>`,
-    iconSize: [0, 0],
-    iconAnchor: [20, 12],
+    iconSize: [50, 24],
+    iconAnchor: [25, 12],
   });
 }
 
@@ -74,6 +75,7 @@ export default function MapScreen() {
 
   const syncMarkers = useCallback(() => {
     const layer = vehicleLayerRef.current;
+    if (!layer) return;
     if (!layer) return;
     layer.clearLayers();
     if (!showLayersRef.current) return;

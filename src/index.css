@@ -83,6 +83,22 @@
   background: hsl(220, 20%, 7%) !important;
 }
 
+.vehicle-marker {
+  background: transparent !important;
+  border: none !important;
+  overflow: visible !important;
+}
+
+.dark-popup .leaflet-popup-content-wrapper {
+  background: hsl(var(--card));
+  color: hsl(var(--foreground));
+  border: 1px solid hsl(var(--border));
+  border-radius: 10px;
+}
+.dark-popup .leaflet-popup-tip {
+  background: hsl(var(--card));
+}
+
 /* Pulse animation for live indicators */
 @keyframes live-pulse {
   0%, 100% { opacity: 1; }
