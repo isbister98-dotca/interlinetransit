@@ -19,7 +19,7 @@ const App = () => (
       <Toaster />
       <Sonner />
       <BrowserRouter>
-        <div className="min-h-[100dvh] bg-background">
+        <div className="min-h-[100dvh] bg-background overflow-y-auto scrollbar-hide">
           <Routes>
             <Route path="/" element={<Navigate to="/map" replace />} />
             <Route path="/map" element={<MapScreen />} />
