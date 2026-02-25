@@ -83,7 +83,7 @@ export default function MapScreen() {
       const marker = L.marker([v.lat, v.lng], { icon: createVehicleIcon(v) });
       marker.bindPopup(
         `<div style="font-family:'IBM Plex Sans',sans-serif;font-size:13px;font-weight:700;margin-bottom:4px">${v.routeLabel}</div>
-         <div style="font-family:'IBM Plex Mono',monospace;font-size:9px;color:#7D8578;letter-spacing:0.06em;text-transform:uppercase">${v.agency} · ${v.routeId} · ${v.speed ? v.speed + ' km/h' : 'Stopped'}</div>`,
+         <div style="font-family:'IBM Plex Mono',monospace;font-size:9px;color:#7D8578;letter-spacing:0.06em;text-transform:uppercase">${v.agency} · ${v.routeId} · ${v.speed != null ? v.speed + ' km/h' : ''}</div>`,
         { className: "dark-popup", closeButton: false }
       );
       marker.addTo(layer);
