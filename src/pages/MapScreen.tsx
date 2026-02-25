@@ -2,10 +2,11 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import L from "leaflet";
 import { Layers } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { MOCK_VEHICLES, MOCK_DEPARTURES } from "@/lib/mock-data";
+import { MOCK_DEPARTURES } from "@/lib/mock-data";
 import { AGENCY_COLORS, type Vehicle } from "@/lib/types";
 import { LivePill } from "@/components/transit/LivePill";
 import { DepartureRow } from "@/components/transit/DepartureRow";
+import { useVehicles } from "@/hooks/use-vehicles";
 
 const GTA_CENTER: [number, number] = [43.6532, -79.3832];
 const DARK_TILES = "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png";
@@ -50,13 +51,47 @@ export default function MapScreen() {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
   const vehicleLayerRef = useRef<L.LayerGroup | null>(null);
+  const vehiclesRef = useRef<Vehicle[]>([]);
+  const showLayersRef = useRef(true);
 
-  // Initialize map
+  const { vehicles } = useVehicles();
+
+  // Keep refs in sync
+  vehiclesRef.current = vehicles;
+  showLayersRef.current = showLayers;
+
+  const syncMarkers = useCallback(() => {
+    const layer = vehicleLayerRef.current;
+    if (!layer) return;
+    layer.clearLayers();
+    if (!showLayersRef.current) return;
+    vehiclesRef.current.forEach((v) => {
+      const marker = L.marker([v.lat, v.lng], { icon: createVehicleIcon(v) });
+      marker.bindPopup(
+        `<div style="font-size:12px;font-family:sans-serif;">
+          <strong style="color:hsl(${AGENCY_COLORS[v.agency]})">${v.routeId}</strong>
+          <span style="opacity:0.7;margin-left:4px;">${v.routeLabel}</span>
+          <br/><span style="opacity:0.6;">${v.speed ?? 0} km/h</span>
+        </div>`,
+        { className: "dark-popup" }
+      );
+      marker.addTo(layer);
+    });
+  }, []);
+
+  // Initialize map + render initial vehicles
   useEffect(() => {
-    if (!mapContainerRef.current || mapRef.current) return;
+    const container = mapContainerRef.current;
+    if (!container) return;
+
+    // Clean any stale Leaflet state (React StrictMode double-mount)
+    if ((container as any)._leaflet_id) {
+      delete (container as any)._leaflet_id;
+      container.innerHTML = "";
+    }
 
     try {
-      const map = L.map(mapContainerRef.current, {
+      const map = L.map(container, {
         center: GTA_CENTER,
         zoom: 12,
         zoomControl: false,
@@ -64,30 +99,16 @@ export default function MapScreen() {
       });
 
       L.tileLayer(DARK_TILES, { maxZoom: 19 }).addTo(map);
-
-      // User location marker
       L.marker(GTA_CENTER, { icon: createUserIcon() }).addTo(map);
 
-      // Vehicle layer
-      const vehicleLayer = L.layerGroup();
-      MOCK_VEHICLES.forEach((v) => {
-        const marker = L.marker([v.lat, v.lng], { icon: createVehicleIcon(v) });
-        marker.bindPopup(
-          `<div style="font-size:12px;font-family:sans-serif;">
-            <strong style="color:hsl(${AGENCY_COLORS[v.agency]})">${v.routeId}</strong>
-            <span style="opacity:0.7;margin-left:4px;">${v.routeLabel}</span>
-            <br/><span style="opacity:0.6;">${v.speed ?? 0} km/h</span>
-          </div>`,
-          { className: "dark-popup" }
-        );
-        marker.addTo(vehicleLayer);
-      });
-      vehicleLayer.addTo(map);
+      const vehicleLayer = L.layerGroup().addTo(map);
 
       mapRef.current = map;
       vehicleLayerRef.current = vehicleLayer;
 
-      // Force a resize after mount to ensure tiles load
+      // Render whatever vehicles we have right now
+      syncMarkers();
+
       setTimeout(() => map.invalidateSize(), 100);
     } catch (e) {
       console.error("Map init failed:", e);
@@ -100,24 +121,15 @@ export default function MapScreen() {
         vehicleLayerRef.current = null;
       }
     };
-  }, []);
+  }, [syncMarkers]);
 
-  // Toggle vehicle layer visibility
+  // Update markers when vehicles or showLayers change
   useEffect(() => {
-    const map = mapRef.current;
-    const layer = vehicleLayerRef.current;
-    if (!map || !layer) return;
-
-    if (showLayers) {
-      if (!map.hasLayer(layer)) map.addLayer(layer);
-    } else {
-      if (map.hasLayer(layer)) map.removeLayer(layer);
-    }
-  }, [showLayers]);
+    syncMarkers();
+  }, [vehicles, showLayers, syncMarkers]);
 
   return (
     <div className="relative w-full h-[calc(100dvh-60px)]">
-      {/* Map container */}
       <div ref={mapContainerRef} className="w-full h-full z-0" />
 
       {/* Layers toggle */}
