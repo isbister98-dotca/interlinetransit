@@ -15,7 +15,7 @@ export default function AlertsScreen() {
   const hasAlerts = MOCK_ALERTS.length > 0;
 
   return (
-    <div className="max-w-[480px] mx-auto px-4 pt-6 pb-24 animate-fade-up">
+    <div className="max-w-[480px] mx-auto px-4 pt-6 pb-24 animate-fade-up overflow-hidden">
       {/* Departures */}
       <div className="mb-6">
         <div className="flex items-center justify-between mb-3">

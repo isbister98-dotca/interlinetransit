@@ -28,7 +28,7 @@ export default function SocialScreen() {
   const podiumOrder = [podium[1], podium[0], podium[2]];
 
   return (
-    <div className="max-w-[480px] mx-auto px-4 pt-6 pb-24 animate-fade-up">
+    <div className="max-w-[480px] mx-auto px-4 pt-6 pb-24 animate-fade-up overflow-hidden">
       <div className="flex items-center justify-between mb-1">
         <h1 className="text-lg font-semibold text-foreground">Social Hub</h1>
         <span className="text-xs text-muted-foreground font-mono">Feb 2026</span>

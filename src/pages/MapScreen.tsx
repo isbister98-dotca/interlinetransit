@@ -172,7 +172,7 @@ export default function MapScreen() {
           <div className="w-10 h-1 rounded-full bg-muted-foreground/40" />
         </button>
 
-        <div className="px-4 pb-4 overflow-y-auto h-[calc(100%-24px)]">
+        <div className="px-4 pb-4 overflow-hidden h-[calc(100%-24px)]">
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-sm font-semibold text-foreground">Union Station</h2>
             <LivePill />
