@@ -11,24 +11,36 @@ import { useVehicles } from "@/hooks/use-vehicles";
 const GTA_CENTER: [number, number] = [43.6532, -79.3832];
 const DARK_TILES = "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png";
 
+// Brand guide SVG icons (from Interline brand guide v3)
+const VEHICLE_ICONS: Record<string, string> = {
+  train: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><rect x="5" y="4" width="14" height="13" rx="3" stroke="currentColor" stroke-width="1.7"/><path d="M8.5 17.5 7 20m9 0-1.5-2.5M5 12h14" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><circle cx="9.5" cy="15" r="1.2" fill="currentColor"/><circle cx="14.5" cy="15" r="1.2" fill="currentColor"/></svg>`,
+  subway: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><rect x="5" y="4" width="14" height="13" rx="3" stroke="currentColor" stroke-width="1.7"/><path d="M8.5 17.5 7 20m9 0-1.5-2.5M5 12h14" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><circle cx="9.5" cy="15" r="1.2" fill="currentColor"/><circle cx="14.5" cy="15" r="1.2" fill="currentColor"/></svg>`,
+  tram: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><rect x="5" y="4" width="14" height="13" rx="3" stroke="currentColor" stroke-width="1.7"/><path d="M8.5 17.5 7 20m9 0-1.5-2.5M5 12h14" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><circle cx="9.5" cy="15" r="1.2" fill="currentColor"/><circle cx="14.5" cy="15" r="1.2" fill="currentColor"/></svg>`,
+  bus: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><rect x="3" y="5" width="18" height="13" rx="2.5" stroke="currentColor" stroke-width="1.7"/><path d="M3 10.5h18M7.5 18.5v2m9-2v2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><circle cx="8" cy="14.5" r="1.2" fill="currentColor"/><circle cx="16" cy="14.5" r="1.2" fill="currentColor"/></svg>`,
+};
+
 function createVehicleIcon(vehicle: Vehicle) {
   const color = AGENCY_COLORS[vehicle.agency];
+  const icon = VEHICLE_ICONS[vehicle.vehicleType] ?? VEHICLE_ICONS.bus;
   return L.divIcon({
     className: "vehicle-marker",
     html: `<div style="
-      background: hsla(${color}, 0.9);
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      background: hsla(${color}, 0.92);
       color: hsl(var(--background));
-      font-size: 9px;
+      font-size: 10px;
       font-weight: 700;
       font-family: 'DM Mono', monospace;
-      padding: 2px 5px;
-      border-radius: 4px;
+      padding: 3px 7px 3px 5px;
+      border-radius: 8px;
       white-space: nowrap;
-      box-shadow: 0 0 8px hsla(${color}, 0.5);
-      border: 1px solid hsla(${color}, 1);
-    ">${vehicle.routeId}</div>`,
+      box-shadow: 0 2px 10px hsla(${color}, 0.5);
+      border: 1.5px solid hsla(${color}, 1);
+    ">${icon}<span>${vehicle.routeId}</span></div>`,
     iconSize: [0, 0],
-    iconAnchor: [15, 10],
+    iconAnchor: [20, 12],
   });
 }
 

@@ -2,11 +2,14 @@ import { Train, Route, AlertTriangle, Users, User } from "lucide-react";
 
 export type Agency = "GO" | "UP" | "TTC" | "MiWay";
 
+export type VehicleType = "train" | "subway" | "tram" | "bus";
+
 export interface Vehicle {
   id: string;
   agency: Agency;
   routeId: string;
   routeLabel: string;
+  vehicleType: VehicleType;
   lat: number;
   lng: number;
   bearing: number;

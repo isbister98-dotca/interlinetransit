@@ -4,15 +4,15 @@ const now = () => new Date();
 const minutesFromNow = (m: number) => new Date(Date.now() + m * 60_000);
 
 export const MOCK_VEHICLES: Vehicle[] = [
-  { id: "go-1", agency: "GO", routeId: "LW", routeLabel: "Lakeshore West", lat: 43.6453, lng: -79.3806, bearing: 270, speed: 65, occupancy: "MEDIUM", timestamp: Date.now() },
-  { id: "go-2", agency: "GO", routeId: "LE", routeLabel: "Lakeshore East", lat: 43.6532, lng: -79.3654, bearing: 90, speed: 72, occupancy: "LOW", timestamp: Date.now() },
-  { id: "go-3", agency: "GO", routeId: "KI", routeLabel: "Kitchener", lat: 43.6588, lng: -79.4098, bearing: 310, speed: 58, occupancy: "HIGH", timestamp: Date.now() },
-  { id: "up-1", agency: "UP", routeId: "UP", routeLabel: "UP Express", lat: 43.6615, lng: -79.4107, bearing: 315, speed: 80, occupancy: "LOW", timestamp: Date.now() },
-  { id: "ttc-1", agency: "TTC", routeId: "1", routeLabel: "Line 1", lat: 43.6529, lng: -79.3849, bearing: 0, speed: 45, occupancy: "HIGH", timestamp: Date.now() },
-  { id: "ttc-2", agency: "TTC", routeId: "2", routeLabel: "Line 2", lat: 43.6543, lng: -79.3907, bearing: 270, speed: 42, occupancy: "MEDIUM", timestamp: Date.now() },
-  { id: "ttc-3", agency: "TTC", routeId: "501", routeLabel: "501 Queen", lat: 43.6489, lng: -79.3951, bearing: 90, speed: 18, occupancy: "FULL", timestamp: Date.now() },
-  { id: "miway-1", agency: "MiWay", routeId: "1", routeLabel: "1 Dundas", lat: 43.5890, lng: -79.6441, bearing: 180, speed: 35, occupancy: "LOW", timestamp: Date.now() },
-  { id: "miway-2", agency: "MiWay", routeId: "2", routeLabel: "2 Cooksville", lat: 43.5956, lng: -79.6123, bearing: 0, speed: 28, occupancy: "MEDIUM", timestamp: Date.now() },
+  { id: "go-1", agency: "GO", routeId: "LW", routeLabel: "Lakeshore West", vehicleType: "train", lat: 43.6453, lng: -79.3806, bearing: 270, speed: 65, occupancy: "MEDIUM", timestamp: Date.now() },
+  { id: "go-2", agency: "GO", routeId: "LE", routeLabel: "Lakeshore East", vehicleType: "train", lat: 43.6532, lng: -79.3654, bearing: 90, speed: 72, occupancy: "LOW", timestamp: Date.now() },
+  { id: "go-3", agency: "GO", routeId: "KI", routeLabel: "Kitchener", vehicleType: "train", lat: 43.6588, lng: -79.4098, bearing: 310, speed: 58, occupancy: "HIGH", timestamp: Date.now() },
+  { id: "up-1", agency: "UP", routeId: "UP", routeLabel: "UP Express", vehicleType: "train", lat: 43.6615, lng: -79.4107, bearing: 315, speed: 80, occupancy: "LOW", timestamp: Date.now() },
+  { id: "ttc-1", agency: "TTC", routeId: "1", routeLabel: "Line 1", vehicleType: "subway", lat: 43.6529, lng: -79.3849, bearing: 0, speed: 45, occupancy: "HIGH", timestamp: Date.now() },
+  { id: "ttc-2", agency: "TTC", routeId: "2", routeLabel: "Line 2", vehicleType: "subway", lat: 43.6543, lng: -79.3907, bearing: 270, speed: 42, occupancy: "MEDIUM", timestamp: Date.now() },
+  { id: "ttc-3", agency: "TTC", routeId: "501", routeLabel: "501 Queen", vehicleType: "tram", lat: 43.6489, lng: -79.3951, bearing: 90, speed: 18, occupancy: "FULL", timestamp: Date.now() },
+  { id: "miway-1", agency: "MiWay", routeId: "1", routeLabel: "1 Dundas", vehicleType: "bus", lat: 43.5890, lng: -79.6441, bearing: 180, speed: 35, occupancy: "LOW", timestamp: Date.now() },
+  { id: "miway-2", agency: "MiWay", routeId: "2", routeLabel: "2 Cooksville", vehicleType: "bus", lat: 43.5956, lng: -79.6123, bearing: 0, speed: 28, occupancy: "MEDIUM", timestamp: Date.now() },
 ];
 
 export const MOCK_DEPARTURES: Departure[] = [
