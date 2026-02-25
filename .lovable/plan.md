@@ -1,82 +1,57 @@
 
 
-# Interline — GTA Real-Time Transit App
+# Fix Blank Map + Add Vehicle Markers + Change Route to /map
 
-## Overview
-A dark, data-dense, mobile-first transit tracking app for the Greater Toronto Area. It shows live vehicle positions, departure predictions, and service alerts from GO Transit, UP Express, TTC, and MiWay in a single polished interface. Uses **OpenStreetMap + Leaflet** (via react-leaflet) with dark CartoDB tiles.
+## Problem
+`react-leaflet` v4 crashes the entire React app with a fatal `render2 is not a function` error in React 18's context system. This blanks the whole page -- not just the map, but the bottom nav and everything else too.
 
-Built in **two phases** — core transit features first, then social/profile features.
+## Solution
+Replace `react-leaflet` usage with direct Leaflet calls in `MapScreen.tsx` only. Everything else stays the same.
 
----
+## Changes
 
-## Phase 1 — Core Transit Experience
+### 1. Update MapScreen.tsx -- use vanilla Leaflet
+- Remove all `react-leaflet` imports (`MapContainer`, `TileLayer`, `Marker`, `Popup`)
+- Use `useRef` for the map container div and the Leaflet map instance
+- Initialize `L.map()` in a `useEffect` on mount, with CartoDB dark tiles
+- Add the pulsing "You are here" marker via `L.marker` with divIcon
+- Add all mock vehicle markers to an `L.layerGroup` that gets toggled by the Layers button
+- Vehicle markers use the same `createVehicleIcon` divIcon styling (agency-colored route chips)
+- Clicking a vehicle marker opens a Leaflet popup with route info
+- Clean up with `map.remove()` on unmount
+- Keep the Layers toggle button and bottom sheet exactly as they are now (plain React, not inside the map)
 
-### 1. Design System & App Shell
-- Implement the full CSS design token system (dark theme, lime green brand, 5-level elevation backgrounds, rgba borders)
-- Load DM Sans + DM Mono fonts
-- Build the frosted-glass **BottomNav** with 5 tabs (Map, Journey, Alerts, Social, Profile), safe-area aware, max 480px centered
-- Set up routing between all 5 screens
-- Build reusable UI primitives: **RouteChip**, **StatusPill**, **LivePill**, **OccupancyBar**, **DepartureRow**, **Toast**
-- Implement animations: fade-up entrances, live dot pulse, card/button hover effects
-- Skeleton shimmer loaders for all loading states
+### 2. Update routing -- change `/` to `/map`
+- In `App.tsx`: change `<Route path="/" ...>` to `<Route path="/map" ...>` and add a redirect from `/` to `/map`
+- In `BottomNav` / `types.ts`: update the Map tab path from `"/"` to `"/map"`
 
-### 2. Live Map Screen (Default Tab)
-- Full-bleed OpenStreetMap with dark CartoDB tiles covering the viewport
-- Live vehicle markers rendered as colored **RouteChip** components, rotated by bearing
-- **Single "Layers" toggle button** in the top-left corner — toggles all transit vehicle markers on or off (all agencies at once, no per-agency filtering)
-- "You are here" marker with pulsing brand-colored ring
-- Draggable bottom sheet (30% → 70% height) showing:
-  - Selected stop name + LivePill
-  - Next 3–5 departures as DepartureRow components, auto-refreshing every 15s
+### 3. Remove react-leaflet dependency
+- Remove `react-leaflet` from `package.json` (keep `leaflet` and `@types/leaflet`)
 
-### 3. Real-Time Data Integration
-- Set up Vite proxy for CORS (GO/UP via Metrolinx API, TTC, MiWay)
-- **useVehicles** hook: fetches and merges vehicle positions from all 4 agencies every 15s (JSON for GO/UP, protobuf for TTC/MiWay via gtfs-realtime-bindings)
-- **useDepartures** hook: fetches next departures for a selected stop every 30s
-- **useAlerts** hook: fetches and merges service alerts from GO + TTC every 60s
-- Mock data fallback for development/offline mode
+## What stays the same
+- All other screens (Journey, Alerts, Social, Profile) -- untouched
+- Bottom sheet with departures -- untouched (it's plain React divs, not react-leaflet)
+- Layers toggle button -- untouched
+- All styling, animations, design tokens -- untouched
+- Mock data -- untouched
 
-### 4. Journey Planner Screen
-- "Plan Journey" header with From/To search inputs and swap button
-- Date/time picker row
-- "Find Routes" primary action button
-- Journey results as cards showing: route chips, duration, departure/arrival times, transfer count
-- **JourneyTimeline** component: vertical stop list with gradient line, glowing current-stop indicator
+## Technical Details
 
-### 5. Alerts & Departures Screen
-- "Union Station Departures" section with live departure rows + LivePill
-- "Service Alerts" section with merged GO + TTC alerts
-- Alert cards styled by severity (red border = disruption, amber = delay, blue = info)
-- Affected route chips inline in alert headers
-- Empty state: green checkmark + "All services running normally"
+The map initialization in `useEffect` will:
 
----
+```text
+useEffect:
+  1. Create L.map(containerRef, { center, zoom, zoomControl: false })
+  2. Add L.tileLayer(DARK_TILES)
+  3. Add user location marker (L.marker with pulsing divIcon)
+  4. Create vehicleLayer = L.layerGroup()
+  5. Add all MOCK_VEHICLES as L.marker with divIcon + bindPopup
+  6. Add vehicleLayer to map
+  7. Return cleanup: map.remove()
 
-## Phase 2 — Social & Profile
+showLayers toggle:
+  - true: map.addLayer(vehicleLayer)
+  - false: map.removeLayer(vehicleLayer)
+```
 
-### 6. Social Hub Screen
-- Header with current month + total rider count
-- 3-way toggle: Trips | CO₂ | Routes
-- Podium layout (2nd, 1st with gold border, 3rd) with avatar initials, names, ranks, scores
-- Leaderboard rows 4–10 with bar chart segments
-- Highlighted "You" row
-- Uses local/mock data for v1
-
-### 7. Profile Screen
-- User info header (name, member since date)
-- Stats grid: Total Trips, CO₂ Saved, Favourite Line, Streak
-- Favourite Routes list
-- Settings section: Notifications, Home Stop, Agency Filters, About
-- Agency attribution footer (Metrolinx, TTC, MiWay, OpenStreetMap)
-- Version number
-
----
-
-## Technical Notes
-- **Map**: react-leaflet with CartoDB dark_all tiles
-- **Data fetching**: SWR for caching and auto-refresh
-- **Protobuf parsing**: gtfs-realtime-bindings for TTC & MiWay feeds
-- **API key**: Metrolinx key stored as `VITE_METROLINX_API_KEY` environment variable
-- **Mobile-first**: max-width 480px centered layout, safe-area padding
-- **No backend needed** for Phase 1
-
+This eliminates the React wrapper that causes the crash while keeping the exact same visual result.
