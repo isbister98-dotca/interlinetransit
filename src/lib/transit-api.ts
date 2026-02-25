@@ -1,6 +1,6 @@
 import GtfsRt from "gtfs-rt-bindings";
 const FeedMessage = GtfsRt.FeedMessage;
-import type { Vehicle, Agency } from "./types";
+import type { Vehicle, Agency, VehicleType } from "./types";
 import { MOCK_VEHICLES } from "./mock-data";
 
 const METROLINX_KEY = "30026966";
@@ -29,6 +29,18 @@ function mapOccupancy(status?: number): Vehicle["occupancy"] | undefined {
   }
 }
 
+function inferVehicleType(agency: Agency, routeId: string): VehicleType {
+  if (agency === "GO" || agency === "UP") return "train";
+  if (agency === "MiWay") return "bus";
+  // TTC: lines 1-4 are subway, 500-series are streetcars, rest are buses
+  const num = parseInt(routeId, 10);
+  if (!isNaN(num)) {
+    if (num >= 1 && num <= 6) return "subway";
+    if (num >= 500 && num <= 515) return "tram";
+  }
+  return "bus";
+}
+
 // ---------- Metrolinx (JSON) ----------
 
 async function fetchWithFallback(proxyBase: string, directBase: string, path: string): Promise<Response> {
@@ -55,11 +67,13 @@ async function fetchMetrolinxVehicles(apiPath: string, agency: Agency): Promise<
     .filter((e: any) => e?.vehicle?.position)
     .map((e: any): Vehicle => {
       const v = e.vehicle;
+      const routeId = v.trip?.routeId ?? v.trip?.route_id ?? "?";
       return {
         id: `${agency.toLowerCase()}-${v.vehicle?.id ?? e.id}`,
         agency,
-        routeId: v.trip?.routeId ?? v.trip?.route_id ?? "?",
-        routeLabel: v.trip?.routeId ?? v.trip?.route_id ?? agency,
+        routeId,
+        routeLabel: routeId,
+        vehicleType: inferVehicleType(agency, routeId),
         lat: v.position.latitude,
         lng: v.position.longitude,
         bearing: v.position.bearing ?? 0,
@@ -88,11 +102,13 @@ async function fetchProtobufVehicles(
     .filter((e: any) => e?.vehicle?.position)
     .map((e: any): Vehicle => {
       const v = e.vehicle;
+      const routeId = v.trip?.routeId ?? v.trip?.route_id ?? "?";
       return {
         id: `${agency.toLowerCase()}-${v.vehicle?.id ?? e.id}`,
         agency,
-        routeId: v.trip?.routeId ?? v.trip?.route_id ?? "?",
-        routeLabel: v.trip?.routeId ?? v.trip?.route_id ?? agency,
+        routeId,
+        routeLabel: routeId,
+        vehicleType: inferVehicleType(agency, routeId),
         lat: v.position.latitude,
         lng: v.position.longitude,
         bearing: v.position.bearing ?? 0,
