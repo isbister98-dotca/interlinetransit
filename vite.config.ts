@@ -11,23 +11,6 @@ export default defineConfig(({ mode }) => ({
     hmr: {
       overlay: false,
     },
-    proxy: {
-      "/api/metrolinx/": {
-        target: "https://api.openmetrolinx.com/OpenDataAPI/",
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api\/metrolinx\//, ""),
-      },
-      "/api/ttc/": {
-        target: "https://bustime.ttc.ca/",
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api\/ttc\//, ""),
-      },
-      "/api/miway/": {
-        target: "https://www.miapp.ca/",
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api\/miway\//, ""),
-      },
-    },
   },
   plugins: [react(), mode === "development" && componentTagger()].filter(Boolean),
   resolve: {
