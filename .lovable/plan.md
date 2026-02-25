@@ -1,105 +1,104 @@
 
 
-# Integrate Real-Time Vehicle Positions from Your API Feeds
+# Implement Transit Vehicle Cache
 
 ## Overview
 
-Replace mock vehicle data with live positions from your own API sources:
-- **GO Transit + UP Express** -- Metrolinx OpenData API (JSON)
-- **TTC** -- GTFS-RT protobuf feed
-- **MiWay** -- GTFS-RT protobuf feed
+Set up a server-side pipeline that fetches live transit data every 15 seconds, caches it in a single database row, and serves it instantly to all users. The client polls 3 seconds after each server write so it always reads fresh data.
 
-## Data Sources
-
-| Agency | Endpoint | Format | Auth |
-|--------|----------|--------|------|
-| GO Transit | `api.openmetrolinx.com/OpenDataAPI/api/V1/Gtfs/Feed/VehiclePosition` | JSON | API key `30026966` as query param |
-| UP Express | `api.openmetrolinx.com/OpenDataAPI/api/V1/UP/Gtfs/Feed/VehiclePosition` | JSON | Same API key |
-| TTC | `bustime.ttc.ca/gtfsrt/vehicles` | Protobuf | None |
-| MiWay | `miapp.ca/GTFS_RT/Vehicle/VehiclePositions.pb` | Protobuf | None |
-
-The Metrolinx API key is a free, public-registration key -- safe to store in the codebase.
-
-## Changes
-
-### 1. Install `gtfs-rt-bindings` (new dependency)
-Required to decode the binary protobuf feeds from TTC and MiWay in the browser. This package provides pre-compiled GTFS-RT protocol buffer bindings.
-
-### 2. Vite Proxy (`vite.config.ts`)
-Add proxy rules for all three API origins to avoid CORS during development:
+## Architecture
 
 ```text
-/api/metrolinx/  ->  https://api.openmetrolinx.com/OpenDataAPI/
-/api/ttc/        ->  https://bustime.ttc.ca/
-/api/miway/      ->  https://www.miapp.ca/
+pg_cron (every minute triggers edge function)
+  Edge Function runs 4 fetches in a loop (0s, 15s, 30s, 45s)
+    -> GO Transit + UP Express (Metrolinx JSON API)
+    -> TTC (GTFS-RT Protobuf)
+    -> MiWay (GTFS-RT Protobuf)
+    -> UPSERT single row in vehicle_cache (id=1)
+
+Client (SWR, every 15s with 3s initial delay):
+  -> SELECT from vehicle_cache where id=1
+  -> Instant read (~200KB JSON)
+  -> Falls back to mock data if stale (>45s old)
 ```
 
-### 3. New file: `src/lib/transit-api.ts`
-API helper with three fetcher functions:
-- `fetchMetrolinxVehicles(path)` -- fetches GO or UP JSON endpoint, appends `?key=30026966`, parses standard GTFS-RT JSON (`entity[].vehicle.position.latitude/longitude`, `vehicle.vehicle.id`, `vehicle.trip.route_id`)
-- `fetchProtobufVehicles(url)` -- fetches TTC or MiWay binary feed, decodes using `gtfs-rt-bindings` `FeedMessage.decode()`, extracts vehicle positions
-- `fetchAllVehicles()` -- calls all four endpoints in parallel via `Promise.all`, maps each to the app's `Vehicle` type, assigns correct `agency` tag ("GO", "UP", "TTC", "MiWay"), falls back to mock data on failure
+## Step-by-Step Changes
 
-Mapping logic:
-- `entity[].vehicle.position.latitude` / `longitude` to flat `lat` / `lng`
-- `entity[].vehicle.vehicle.id` to `id`
-- `entity[].vehicle.trip.route_id` to `routeId`
-- `entity[].vehicle.position.bearing` to `bearing`
-- `entity[].vehicle.position.speed` to `speed`
-- Occupancy status mapped to `"LOW" | "MEDIUM" | "HIGH" | "FULL"` enum when available
+### 1. Create `vehicle_cache` table (database migration)
 
-### 4. New file: `src/hooks/use-vehicles.ts`
-SWR-based hook:
-- Key: `"vehicles"`
-- Fetcher: calls `fetchAllVehicles()`
-- `refreshInterval: 15000` (15-second auto-refresh)
-- Returns `{ vehicles: Vehicle[], isLoading, error }`
-- Falls back to `MOCK_VEHICLES` if all API calls fail
+A single-row table that gets overwritten every 15 seconds:
 
-### 5. Update `src/pages/MapScreen.tsx`
-- Replace `MOCK_VEHICLES` with `useVehicles()` hook
-- Separate map initialization (runs once) from vehicle rendering
-- Add a new `useEffect` watching the `vehicles` array that clears `vehicleLayerRef` and re-populates markers
-- Show a subtle loading shimmer on first load
-- Keep bottom sheet departures as mock data (separate concern)
+| Column | Type | Description |
+|--------|------|-------------|
+| id | integer, PK, default 1 | Always 1 |
+| vehicles | jsonb, default '[]' | Full Vehicle[] array |
+| updated_at | timestamptz | Last successful fetch |
+| agency_status | jsonb | Per-agency success/failure |
 
-### 6. Production CORS handling
-In `transit-api.ts`, try the proxy path first. If it fails (e.g., in production where Vite proxy is unavailable), retry with the direct API URL. The Metrolinx API sets CORS headers; TTC and MiWay may not, so gracefully fall back to mock data for any agency that fails.
+- RLS enabled with public SELECT policy (transit data is public, no auth needed to read)
+- No client-side INSERT/UPDATE allowed
+- Seed with one empty row
+
+### 2. Create Edge Function: `supabase/functions/transit-vehicles/index.ts`
+
+- Fetches all 4 transit feeds server-side (no CORS issues)
+- Decodes TTC/MiWay protobuf using a lightweight Deno-compatible approach (manually parse GTFS-RT protobuf wire format or use `npm:protobufjs`)
+- Fetches GO/UP from Metrolinx JSON API with key `30026966`
+- Maps all entities to `Vehicle` format with `inferVehicleType` and `mapOccupancy` helpers
+- UPSERTs into `vehicle_cache` where `id = 1` using service role key
+- Uses `Promise.allSettled` so one failing agency does not break others
+- Includes CORS headers
+- Config: `verify_jwt = false` in config.toml (public transit data)
+
+### 3. Set up pg_cron job (via SQL insert tool)
+
+- Enable `pg_cron` and `pg_net` extensions
+- Schedule the edge function to be called every minute via `pg_net`
+- The edge function itself will handle 4 sub-invocations (at 0s, 15s, 30s, 45s) within each minute to achieve 15-second refresh
+- Note: `pg_cron` minimum is 1 minute, so the edge function handles sub-scheduling internally
+
+### 4. Simplify `src/lib/transit-api.ts`
+
+Replace the entire file (~130 lines) with ~25 lines:
+- Import the Supabase client
+- Query `vehicle_cache` table for the single row
+- Check `updated_at` freshness (if older than 45 seconds, fall back to mock data)
+- Return the `vehicles` JSON array
+- Remove all direct API fetching, proxy fallback, and browser-side protobuf decoding
+
+### 5. Update `src/hooks/use-vehicles.ts`
+
+- Add a 3-second initial delay before first fetch (offset from server writes)
+- Keep `refreshInterval` at `15_000`
+- Interface stays identical: `{ vehicles, isLoading, error }`
+
+### 6. Clean up `vite.config.ts`
+
+- Remove the 3 proxy rules (`/api/metrolinx/`, `/api/ttc/`, `/api/miway/`)
+
+### 7. Clean up `package.json`
+
+- Remove `gtfs-rt-bindings` and `protobufjs` dependencies (decoding moves to edge function)
 
 ## What Stays the Same
-- All other screens (Journey, Alerts, Social, Profile)
-- Bottom sheet departures (still mock)
-- Map tiles, user location marker, dark theme
-- Vehicle marker styling (agency-colored chips)
-- Routing and navigation
+
+- All map rendering, vehicle marker icons, and agency colors
+- The `useVehicles()` hook return shape
+- Mock data fallback behavior
+- All other screens and UI components
+- Bottom sheet departures
+
+## Database Size
+
+- ~1,300 vehicles x ~150 bytes = ~200 KB, always exactly 1 row
+- Overwritten every 15 seconds, never grows
 
 ## New Files
-- `src/lib/transit-api.ts` -- API types, fetchers, protobuf decoder, mapper
-- `src/hooks/use-vehicles.ts` -- SWR hook
+- `supabase/functions/transit-vehicles/index.ts`
 
 ## Modified Files
-- `vite.config.ts` -- proxy config for 3 API origins
-- `src/pages/MapScreen.tsx` -- use live data, separate init from vehicle rendering
-- `package.json` -- add `gtfs-rt-bindings` dependency
-
-## Technical Details
-
-```text
-Data flow:
-
-  useVehicles() hook (SWR, 15s refresh)
-    -> fetchAllVehicles()
-      -> Promise.all([
-           fetchMetrolinxVehicles("api/V1/Gtfs/Feed/VehiclePosition"),      // GO
-           fetchMetrolinxVehicles("api/V1/UP/Gtfs/Feed/VehiclePosition"),    // UP
-           fetchProtobufVehicles("/api/ttc/gtfsrt/vehicles"),                // TTC
-           fetchProtobufVehicles("/api/miway/GTFS_RT/Vehicle/VehiclePositions.pb") // MiWay
-         ])
-      -> flatten + map to Vehicle[]
-    -> { vehicles, isLoading, error }
-
-  MapScreen useEffect([vehicles])
-    -> vehicleLayerRef.clearLayers()
-    -> vehicles.forEach(v => L.marker + popup)
-```
+- `src/lib/transit-api.ts` (simplified to single database query)
+- `src/hooks/use-vehicles.ts` (3s offset delay)
+- `vite.config.ts` (remove proxy rules)
+- `package.json` (remove protobuf deps)
 
