@@ -43,13 +43,21 @@ function inferVehicleType(agency: Agency, routeId: string): VehicleType {
 
 // ---------- Metrolinx (JSON) ----------
 
-async function fetchWithFallback(proxyBase: string, directBase: string, path: string): Promise<Response> {
+async function fetchWithFallback(proxyBase: string, directBase: string, path: string, expectBinary = false): Promise<Response> {
+  // Try proxy first (works in local dev with Vite proxy)
   try {
     const res = await fetch(`${proxyBase}${path}`);
-    if (res.ok) return res;
+    if (res.ok) {
+      const ct = res.headers.get("content-type") ?? "";
+      // Validate we got real API data, not the app's HTML shell
+      if (expectBinary ? !ct.includes("text/html") : (ct.includes("json") || ct.includes("protobuf") || ct.includes("octet"))) {
+        return res;
+      }
+    }
   } catch {
-    // proxy unavailable (production) – try direct
+    // proxy unavailable – fall through
   }
+  // Direct URL (works when API sets CORS headers)
   return fetch(`${directBase}${path}`);
 }
 
@@ -92,7 +100,7 @@ async function fetchProtobufVehicles(
   path: string,
   agency: Agency
 ): Promise<Vehicle[]> {
-  const res = await fetchWithFallback(proxyBase, directBase, path);
+  const res = await fetchWithFallback(proxyBase, directBase, path, true);
   if (!res.ok) throw new Error(`${agency}: ${res.status}`);
 
   const buf = new Uint8Array(await res.arrayBuffer());
