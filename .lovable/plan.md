@@ -1,86 +1,105 @@
 
 
-# Integrate Real-Time Vehicle Positions from Transit Tracker API
+# Integrate Real-Time Vehicle Positions from Your API Feeds
 
 ## Overview
 
-Replace the hardcoded mock vehicle data with live vehicle positions from the **Transit Tracker API** (`api.transittracker.ca`), which aggregates GTFS-RT feeds for GO Transit, UP Express, TTC, and MiWay into a single, free, unauthenticated JSON API.
+Replace mock vehicle data with live positions from your own API sources:
+- **GO Transit + UP Express** -- Metrolinx OpenData API (JSON)
+- **TTC** -- GTFS-RT protobuf feed
+- **MiWay** -- GTFS-RT protobuf feed
 
-## Data Source
+## Data Sources
 
-The Transit Tracker API provides vehicle positions for all four agencies via:
-- `GET /v2/agencies/go/vehicles?geojson=0` (GO Transit)
-- `GET /v2/agencies/up/vehicles?geojson=0` (UP Express)
-- `GET /v2/agencies/ttc/vehicles?geojson=0` (TTC)
-- `GET /v2/agencies/miway/vehicles?geojson=0` (MiWay)
+| Agency | Endpoint | Format | Auth |
+|--------|----------|--------|------|
+| GO Transit | `api.openmetrolinx.com/OpenDataAPI/api/V1/Gtfs/Feed/VehiclePosition` | JSON | API key `30026966` as query param |
+| UP Express | `api.openmetrolinx.com/OpenDataAPI/api/V1/UP/Gtfs/Feed/VehiclePosition` | JSON | Same API key |
+| TTC | `bustime.ttc.ca/gtfsrt/vehicles` | Protobuf | None |
+| MiWay | `miapp.ca/GTFS_RT/Vehicle/VehiclePositions.pb` | Protobuf | None |
 
-Each vehicle in the response includes:
-- `id`, `label`, `routeId`
-- `position: { lat, lon }`
-- `bearing`, `speed`
-- `occupancyStatus: { data, label }`
-- `agency` (slug string like "go", "ttc", etc.)
-
-No API key is required. The `?geojson=0` parameter keeps the response smaller by omitting the GeoJSON FeatureCollection.
+The Metrolinx API key is a free, public-registration key -- safe to store in the codebase.
 
 ## Changes
 
-### 1. Vite Proxy (`vite.config.ts`)
-Add a proxy rule to forward `/api/transit/` requests to `https://api.transittracker.ca/v2/` to avoid CORS issues during development.
+### 1. Install `gtfs-rt-bindings` (new dependency)
+Required to decode the binary protobuf feeds from TTC and MiWay in the browser. This package provides pre-compiled GTFS-RT protocol buffer bindings.
 
-### 2. New Hook: `src/hooks/use-vehicles.ts`
-Create a custom SWR hook (`useVehicles`) that:
-- Fetches all four agency endpoints in parallel using `Promise.all`
-- Maps the API response to the existing `Vehicle` type (converting `position.lat`/`position.lon` to flat `lat`/`lng`, mapping agency slugs like `"go"` to `"GO"`, mapping occupancy status codes to our enum)
-- Auto-refreshes every 15 seconds via SWR's `refreshInterval`
-- Falls back to mock data if all API calls fail
-- Exposes `vehicles`, `isLoading`, and `error` state
+### 2. Vite Proxy (`vite.config.ts`)
+Add proxy rules for all three API origins to avoid CORS during development:
 
-### 3. New API Helper: `src/lib/transit-api.ts`
-- Define the Transit Tracker API response types
-- Create a `fetchAgencyVehicles(slug)` function that calls the proxy endpoint
-- Map agency slugs (`"go"` -> `"GO"`, `"up"` -> `"UP"`, `"ttc"` -> `"TTC"`, `"miway"` -> `"MiWay"`)
-- Map occupancy status numbers to our `"LOW" | "MEDIUM" | "HIGH" | "FULL"` enum
+```text
+/api/metrolinx/  ->  https://api.openmetrolinx.com/OpenDataAPI/
+/api/ttc/        ->  https://bustime.ttc.ca/
+/api/miway/      ->  https://www.miapp.ca/
+```
 
-### 4. Update `MapScreen.tsx`
-- Replace `MOCK_VEHICLES` import with the `useVehicles()` hook
-- Add a `useEffect` that clears and re-populates the vehicle `L.layerGroup` whenever the `vehicles` array changes
-- Show a loading indicator while data is being fetched
-- Keep mock departures in the bottom sheet for now (departures are a separate API concern)
+### 3. New file: `src/lib/transit-api.ts`
+API helper with three fetcher functions:
+- `fetchMetrolinxVehicles(path)` -- fetches GO or UP JSON endpoint, appends `?key=30026966`, parses standard GTFS-RT JSON (`entity[].vehicle.position.latitude/longitude`, `vehicle.vehicle.id`, `vehicle.trip.route_id`)
+- `fetchProtobufVehicles(url)` -- fetches TTC or MiWay binary feed, decodes using `gtfs-rt-bindings` `FeedMessage.decode()`, extracts vehicle positions
+- `fetchAllVehicles()` -- calls all four endpoints in parallel via `Promise.all`, maps each to the app's `Vehicle` type, assigns correct `agency` tag ("GO", "UP", "TTC", "MiWay"), falls back to mock data on failure
 
-### 5. Production CORS Handling
-Since Vite proxy only works in dev, add a runtime check: if the proxy path fails (production), fall back to calling the API directly (Transit Tracker API already sets CORS headers `vary: Origin`). If CORS is blocked in production, gracefully fall back to mock data.
+Mapping logic:
+- `entity[].vehicle.position.latitude` / `longitude` to flat `lat` / `lng`
+- `entity[].vehicle.vehicle.id` to `id`
+- `entity[].vehicle.trip.route_id` to `routeId`
+- `entity[].vehicle.position.bearing` to `bearing`
+- `entity[].vehicle.position.speed` to `speed`
+- Occupancy status mapped to `"LOW" | "MEDIUM" | "HIGH" | "FULL"` enum when available
+
+### 4. New file: `src/hooks/use-vehicles.ts`
+SWR-based hook:
+- Key: `"vehicles"`
+- Fetcher: calls `fetchAllVehicles()`
+- `refreshInterval: 15000` (15-second auto-refresh)
+- Returns `{ vehicles: Vehicle[], isLoading, error }`
+- Falls back to `MOCK_VEHICLES` if all API calls fail
+
+### 5. Update `src/pages/MapScreen.tsx`
+- Replace `MOCK_VEHICLES` with `useVehicles()` hook
+- Separate map initialization (runs once) from vehicle rendering
+- Add a new `useEffect` watching the `vehicles` array that clears `vehicleLayerRef` and re-populates markers
+- Show a subtle loading shimmer on first load
+- Keep bottom sheet departures as mock data (separate concern)
+
+### 6. Production CORS handling
+In `transit-api.ts`, try the proxy path first. If it fails (e.g., in production where Vite proxy is unavailable), retry with the direct API URL. The Metrolinx API sets CORS headers; TTC and MiWay may not, so gracefully fall back to mock data for any agency that fails.
 
 ## What Stays the Same
-- All other screens (Journey, Alerts, Social, Profile) -- untouched
-- Bottom sheet departures -- still mock data (separate feature)
-- Map initialization, tiles, user marker -- untouched
-- Vehicle marker styling (agency-colored `divIcon`) -- untouched, just fed real data
-- Routing -- untouched
+- All other screens (Journey, Alerts, Social, Profile)
+- Bottom sheet departures (still mock)
+- Map tiles, user location marker, dark theme
+- Vehicle marker styling (agency-colored chips)
+- Routing and navigation
+
+## New Files
+- `src/lib/transit-api.ts` -- API types, fetchers, protobuf decoder, mapper
+- `src/hooks/use-vehicles.ts` -- SWR hook
+
+## Modified Files
+- `vite.config.ts` -- proxy config for 3 API origins
+- `src/pages/MapScreen.tsx` -- use live data, separate init from vehicle rendering
+- `package.json` -- add `gtfs-rt-bindings` dependency
 
 ## Technical Details
 
 ```text
 Data flow:
-  useVehicles() hook
-    -> SWR fetcher (every 15s)
-      -> fetch /api/transit/agencies/go/vehicles?geojson=0  (proxied in dev)
-      -> fetch /api/transit/agencies/up/vehicles?geojson=0
-      -> fetch /api/transit/agencies/ttc/vehicles?geojson=0
-      -> fetch /api/transit/agencies/miway/vehicles?geojson=0
-    -> Promise.all -> flatten -> map to Vehicle[]
-    -> return { vehicles, isLoading, error }
+
+  useVehicles() hook (SWR, 15s refresh)
+    -> fetchAllVehicles()
+      -> Promise.all([
+           fetchMetrolinxVehicles("api/V1/Gtfs/Feed/VehiclePosition"),      // GO
+           fetchMetrolinxVehicles("api/V1/UP/Gtfs/Feed/VehiclePosition"),    // UP
+           fetchProtobufVehicles("/api/ttc/gtfsrt/vehicles"),                // TTC
+           fetchProtobufVehicles("/api/miway/GTFS_RT/Vehicle/VehiclePositions.pb") // MiWay
+         ])
+      -> flatten + map to Vehicle[]
+    -> { vehicles, isLoading, error }
 
   MapScreen useEffect([vehicles])
-    -> vehicleLayerRef.current.clearLayers()
-    -> vehicles.forEach(v => add L.marker with divIcon + popup)
+    -> vehicleLayerRef.clearLayers()
+    -> vehicles.forEach(v => L.marker + popup)
 ```
-
-## New Files
-- `src/lib/transit-api.ts` -- API types, fetcher, mapper
-- `src/hooks/use-vehicles.ts` -- SWR hook
-
-## Modified Files
-- `vite.config.ts` -- add proxy config
-- `src/pages/MapScreen.tsx` -- use live data instead of mock
 
