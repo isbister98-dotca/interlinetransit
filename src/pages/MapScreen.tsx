@@ -1,11 +1,9 @@
-import { useState, useCallback } from "react";
-import { MapContainer, TileLayer, Marker, Popup, useMap } from "react-leaflet";
+import { useState, useRef, useEffect, useCallback } from "react";
 import L from "leaflet";
 import { Layers } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { MOCK_VEHICLES, MOCK_DEPARTURES } from "@/lib/mock-data";
 import { AGENCY_COLORS, type Vehicle } from "@/lib/types";
-import { RouteChip } from "@/components/transit/RouteChip";
 import { LivePill } from "@/components/transit/LivePill";
 import { DepartureRow } from "@/components/transit/DepartureRow";
 
@@ -25,7 +23,6 @@ function createVehicleIcon(vehicle: Vehicle) {
       padding: 2px 5px;
       border-radius: 4px;
       white-space: nowrap;
-      transform: rotate(0deg);
       box-shadow: 0 0 8px hsla(${color}, 0.5);
       border: 1px solid hsla(${color}, 1);
     ">${vehicle.routeId}</div>`,
@@ -34,52 +31,94 @@ function createVehicleIcon(vehicle: Vehicle) {
   });
 }
 
-function UserLocationMarker() {
-  return (
-    <Marker
-      position={GTA_CENTER}
-      icon={L.divIcon({
-        className: "user-marker",
-        html: `<div style="position:relative;width:16px;height:16px;">
-          <div style="position:absolute;inset:-4px;border-radius:50%;background:hsla(82,85%,55%,0.2);animation:pulse-ring 1.5s ease-out infinite;"></div>
-          <div style="width:16px;height:16px;border-radius:50%;background:hsl(82,85%,55%);border:2px solid hsl(var(--background));box-shadow:0 0 12px hsla(82,85%,55%,0.6);"></div>
-        </div>`,
-        iconSize: [16, 16],
-        iconAnchor: [8, 8],
-      })}
-    />
-  );
+function createUserIcon() {
+  return L.divIcon({
+    className: "user-marker",
+    html: `<div style="position:relative;width:16px;height:16px;">
+      <div style="position:absolute;inset:-4px;border-radius:50%;background:hsla(82,85%,55%,0.2);animation:pulse-ring 1.5s ease-out infinite;"></div>
+      <div style="width:16px;height:16px;border-radius:50%;background:hsl(82,85%,55%);border:2px solid hsl(var(--background));box-shadow:0 0 12px hsla(82,85%,55%,0.6);"></div>
+    </div>`,
+    iconSize: [16, 16],
+    iconAnchor: [8, 8],
+  });
 }
 
 export default function MapScreen() {
   const [showLayers, setShowLayers] = useState(true);
   const [sheetExpanded, setSheetExpanded] = useState(false);
 
+  const mapContainerRef = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<L.Map | null>(null);
+  const vehicleLayerRef = useRef<L.LayerGroup | null>(null);
+
+  // Initialize map
+  useEffect(() => {
+    if (!mapContainerRef.current || mapRef.current) return;
+
+    try {
+      const map = L.map(mapContainerRef.current, {
+        center: GTA_CENTER,
+        zoom: 12,
+        zoomControl: false,
+        attributionControl: false,
+      });
+
+      L.tileLayer(DARK_TILES, { maxZoom: 19 }).addTo(map);
+
+      // User location marker
+      L.marker(GTA_CENTER, { icon: createUserIcon() }).addTo(map);
+
+      // Vehicle layer
+      const vehicleLayer = L.layerGroup();
+      MOCK_VEHICLES.forEach((v) => {
+        const marker = L.marker([v.lat, v.lng], { icon: createVehicleIcon(v) });
+        marker.bindPopup(
+          `<div style="font-size:12px;font-family:sans-serif;">
+            <strong style="color:hsl(${AGENCY_COLORS[v.agency]})">${v.routeId}</strong>
+            <span style="opacity:0.7;margin-left:4px;">${v.routeLabel}</span>
+            <br/><span style="opacity:0.6;">${v.speed ?? 0} km/h</span>
+          </div>`,
+          { className: "dark-popup" }
+        );
+        marker.addTo(vehicleLayer);
+      });
+      vehicleLayer.addTo(map);
+
+      mapRef.current = map;
+      vehicleLayerRef.current = vehicleLayer;
+
+      // Force a resize after mount to ensure tiles load
+      setTimeout(() => map.invalidateSize(), 100);
+    } catch (e) {
+      console.error("Map init failed:", e);
+    }
+
+    return () => {
+      if (mapRef.current) {
+        mapRef.current.remove();
+        mapRef.current = null;
+        vehicleLayerRef.current = null;
+      }
+    };
+  }, []);
+
+  // Toggle vehicle layer visibility
+  useEffect(() => {
+    const map = mapRef.current;
+    const layer = vehicleLayerRef.current;
+    if (!map || !layer) return;
+
+    if (showLayers) {
+      if (!map.hasLayer(layer)) map.addLayer(layer);
+    } else {
+      if (map.hasLayer(layer)) map.removeLayer(layer);
+    }
+  }, [showLayers]);
+
   return (
     <div className="relative w-full h-[calc(100dvh-60px)]">
-      {/* Map */}
-      <MapContainer
-        center={GTA_CENTER}
-        zoom={12}
-        className="w-full h-full z-0"
-        zoomControl={false}
-        attributionControl={false}
-      >
-        <TileLayer url={DARK_TILES} />
-        <UserLocationMarker />
-
-        {showLayers &&
-          MOCK_VEHICLES.map((v) => (
-            <Marker key={v.id} position={[v.lat, v.lng]} icon={createVehicleIcon(v)}>
-              <Popup className="dark-popup">
-                <div className="text-xs">
-                  <RouteChip routeId={v.routeId} routeLabel={v.routeLabel} agency={v.agency} size="md" />
-                  <p className="mt-1 text-muted-foreground">{v.speed} km/h</p>
-                </div>
-              </Popup>
-            </Marker>
-          ))}
-      </MapContainer>
+      {/* Map container */}
+      <div ref={mapContainerRef} className="w-full h-full z-0" />
 
       {/* Layers toggle */}
       <button
@@ -100,7 +139,6 @@ export default function MapScreen() {
           sheetExpanded ? "h-[70%]" : "h-[30%]"
         )}
       >
-        {/* Drag handle */}
         <button
           className="w-full flex justify-center py-2 cursor-grab active:cursor-grabbing"
           onClick={() => setSheetExpanded(!sheetExpanded)}
