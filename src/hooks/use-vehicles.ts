@@ -1,6 +1,5 @@
 import useSWR from "swr";
 import { fetchAllVehicles } from "@/lib/transit-api";
-import { MOCK_VEHICLES } from "@/lib/mock-data";
 import type { Vehicle } from "@/lib/types";
 import { useState, useEffect } from "react";
 
@@ -17,13 +16,13 @@ export function useVehicles() {
     fetchAllVehicles,
     {
       refreshInterval: 15_000,
-      fallbackData: MOCK_VEHICLES,
+      fallbackData: [],
       revalidateOnFocus: false,
     }
   );
 
   return {
-    vehicles: data ?? MOCK_VEHICLES,
+    vehicles: data ?? [],
     isLoading: !ready || isLoading,
     error,
   };
