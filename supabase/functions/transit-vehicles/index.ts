@@ -38,7 +38,11 @@ function mapOccupancy(status?: number): Vehicle["occupancy"] | undefined {
 }
 
 function inferVehicleType(agency: Agency, routeId: string): VehicleType {
-  if (agency === "GO" || agency === "UP") return "train";
+  if (agency === "UP") return "train";
+  if (agency === "GO") {
+    // If routeId is all letters → train, if has digits → bus
+    return /^\d+$/.test(routeId) ? "bus" : "train";
+  }
   if (agency === "MiWay") return "bus";
   const num = parseInt(routeId, 10);
   if (!isNaN(num)) {
@@ -46,6 +50,18 @@ function inferVehicleType(agency: Agency, routeId: string): VehicleType {
     if (num >= 500 && num <= 515) return "tram";
   }
   return "bus";
+}
+
+/** Extract route suffix from GO Transit vehicle ID like "01260426-RH" → "RH" */
+function parseGoRouteId(rawRouteId: string, vehicleId: string): string {
+  // The route is the suffix after the last hyphen in the vehicle ID
+  const parts = vehicleId.split("-");
+  if (parts.length >= 2) {
+    const suffix = parts[parts.length - 1];
+    if (suffix.length >= 1) return suffix;
+  }
+  // Fallback: use last 2 chars of rawRouteId
+  return rawRouteId.length > 2 ? rawRouteId.slice(-2) : rawRouteId;
 }
 
 // ── GTFS-RT Protobuf schema (inline) ──────────────────
@@ -134,9 +150,14 @@ async function fetchMetrolinxVehicles(apiPath: string, agency: Agency): Promise<
     .filter((e: any) => e?.vehicle?.position)
     .map((e: any): Vehicle => {
       const v = e.vehicle;
-      const routeId = v.trip?.routeId ?? v.trip?.route_id ?? "?";
+      const rawRouteId = v.trip?.routeId ?? v.trip?.route_id ?? "?";
+      const vehicleId = v.vehicle?.id ?? e.id ?? "";
+      
+      // For GO: extract route from vehicle ID suffix (e.g. "01260426-RH" → "RH")
+      const routeId = agency === "GO" ? parseGoRouteId(rawRouteId, vehicleId) : rawRouteId;
+      
       return {
-        id: `${agency.toLowerCase()}-${v.vehicle?.id ?? e.id}`,
+        id: `${agency.toLowerCase()}-${vehicleId}`,
         agency,
         routeId,
         routeLabel: routeId,
