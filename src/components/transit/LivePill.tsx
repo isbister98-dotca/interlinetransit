@@ -6,11 +6,11 @@ interface LivePillProps {
 
 export function LivePill({ className }: LivePillProps) {
   return (
-    <span className={cn("inline-flex items-center gap-1.5 text-[10px] font-mono font-medium uppercase tracking-wider text-primary", className)}>
-      <span className="relative flex h-2 w-2">
-        <span className="absolute inline-flex h-full w-full rounded-full bg-primary animate-pulse-ring" />
-        <span className="relative inline-flex h-2 w-2 rounded-full bg-primary" />
-      </span>
+    <span className={cn(
+      "inline-flex items-center gap-[7px] px-2.5 py-1 rounded-sm font-mono text-[10px] font-semibold uppercase tracking-[0.10em] bg-success text-[#0a1208]",
+      className
+    )}>
+      <span className="w-1.5 h-1.5 rounded-full bg-[#0a1208] opacity-70" />
       Live
     </span>
   );

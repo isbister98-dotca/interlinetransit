@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&family=DM+Mono:wght@300;400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -6,60 +6,75 @@
 
 @layer base {
   :root {
-    --background: 220 20% 7%;
-    --foreground: 0 0% 95%;
+    /* Brand Guide v4 — olive-tinted dark palette */
+    --background: 80 8% 4%;         /* #0E0F0D */
+    --foreground: 80 8% 93%;        /* #EEF0EB */
 
-    --card: 220 18% 10%;
-    --card-foreground: 0 0% 95%;
+    --card: 80 7% 10%;              /* #1B1D19 */
+    --card-foreground: 80 8% 93%;
+    --card-hover: 80 7% 13%;        /* #21241E */
 
-    --popover: 220 18% 10%;
-    --popover-foreground: 0 0% 95%;
+    --popover: 80 7% 10%;
+    --popover-foreground: 80 8% 93%;
 
-    --primary: 82 85% 55%;
-    --primary-foreground: 220 20% 7%;
+    --primary: 93 50% 56%;          /* #8ECB5A */
+    --primary-foreground: 80 8% 4%;
 
-    --secondary: 220 16% 14%;
-    --secondary-foreground: 0 0% 85%;
+    --secondary: 80 6% 8%;          /* #141612 */
+    --secondary-foreground: 80 8% 93%;
 
-    --muted: 220 14% 16%;
-    --muted-foreground: 220 10% 55%;
+    --muted: 80 7% 10%;             /* #1B1D19 */
+    --muted-foreground: 80 6% 50%;  /* #7D8578 */
 
-    --accent: 220 16% 18%;
-    --accent-foreground: 0 0% 95%;
+    --accent: 80 7% 15%;            /* #272A23 */
+    --accent-foreground: 80 8% 93%;
 
-    --destructive: 0 72% 51%;
-    --destructive-foreground: 0 0% 95%;
+    --destructive: 0 66% 63%;       /* #E06060 */
+    --destructive-foreground: 80 8% 93%;
 
-    --warning: 38 92% 50%;
-    --warning-foreground: 220 20% 7%;
+    --warning: 38 76% 54%;          /* #DFA832 */
+    --warning-foreground: 80 8% 4%;
 
-    --info: 210 100% 52%;
-    --info-foreground: 0 0% 95%;
+    --info: 210 74% 63%;            /* #5EA8E8 */
+    --info-foreground: 80 8% 93%;
 
-    --success: 142 71% 45%;
-    --success-foreground: 220 20% 7%;
+    --success: 130 45% 61%;         /* #6FC97E */
+    --success-foreground: 80 8% 4%;
 
-    --border: 220 14% 16%;
-    --input: 220 14% 16%;
-    --ring: 82 85% 55%;
+    --border: 0 0% 100% / 0.12;
+    --input: 80 6% 8%;              /* #171914 */
+    --ring: 93 50% 56%;
 
-    --radius: 0.75rem;
+    --radius: 0.5rem;               /* 8px base — brand guide md */
 
-    /* Elevation backgrounds */
-    --surface-0: 220 20% 7%;
-    --surface-1: 220 18% 10%;
-    --surface-2: 220 16% 14%;
-    --surface-3: 220 14% 18%;
-    --surface-4: 220 12% 22%;
+    /* Elevation backgrounds (olive-tinted 5-level) */
+    --surface-0: 80 8% 4%;          /* #0E0F0D */
+    --surface-1: 80 6% 8%;          /* #141612 */
+    --surface-2: 80 7% 10%;         /* #1B1D19 */
+    --surface-3: 80 7% 13%;         /* #21241E */
+    --surface-4: 80 7% 15%;         /* #272A23 */
 
-    --sidebar-background: 220 18% 10%;
-    --sidebar-foreground: 0 0% 95%;
-    --sidebar-primary: 82 85% 55%;
-    --sidebar-primary-foreground: 220 20% 7%;
-    --sidebar-accent: 220 16% 18%;
-    --sidebar-accent-foreground: 0 0% 95%;
-    --sidebar-border: 220 14% 16%;
-    --sidebar-ring: 82 85% 55%;
+    /* Brand extended */
+    --brand-dim: 93 50% 56% / 0.12;
+    --brand-border: 93 50% 56% / 0.28;
+    --brand-600: 93 47% 45%;        /* #6BA83D */
+
+    /* Status extended */
+    --purple: 258 60% 68%;          /* #9B7EE8 */
+    --teal: 168 48% 52%;            /* #4DC8B0 */
+    --gold: 42 82% 66%;             /* #F0C060 */
+
+    /* Text hierarchy */
+    --text-tertiary: 80 6% 24%;     /* #3E4239 */
+
+    --sidebar-background: 80 6% 8%;
+    --sidebar-foreground: 80 8% 93%;
+    --sidebar-primary: 93 50% 56%;
+    --sidebar-primary-foreground: 80 8% 4%;
+    --sidebar-accent: 80 7% 15%;
+    --sidebar-accent-foreground: 80 8% 93%;
+    --sidebar-border: 0 0% 100% / 0.12;
+    --sidebar-ring: 93 50% 56%;
   }
 }
 
@@ -69,18 +84,20 @@
   }
 
   body {
-    @apply bg-background text-foreground font-sans antialiased;
-    font-family: 'DM Sans', sans-serif;
+    @apply bg-background text-foreground antialiased;
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 14px;
+    line-height: 1.65;
   }
 
   code, pre, .font-mono {
-    font-family: 'DM Mono', monospace;
+    font-family: 'IBM Plex Mono', monospace;
   }
 }
 
 /* Leaflet overrides for dark theme */
 .leaflet-container {
-  background: hsl(220, 20%, 7%) !important;
+  background: #0E0F0D !important;
 }
 
 .vehicle-marker {
@@ -90,13 +107,13 @@
 }
 
 .dark-popup .leaflet-popup-content-wrapper {
-  background: hsl(var(--card));
-  color: hsl(var(--foreground));
-  border: 1px solid hsl(var(--border));
+  background: #1B1D19;
+  color: #EEF0EB;
+  border: 1px solid rgba(255,255,255,0.12);
   border-radius: 10px;
 }
 .dark-popup .leaflet-popup-tip {
-  background: hsl(var(--card));
+  background: #1B1D19;
 }
 
 /* Pulse animation for live indicators */
@@ -125,15 +142,15 @@
 }
 
 .animate-fade-up {
-  animation: fade-up 0.4s ease-out both;
+  animation: fade-up 0.35s cubic-bezier(0.20,1,0.34,1) both;
 }
 
-/* Frosted glass */
+/* Frosted glass — brand guide elevated surface */
 .glass {
-  background: hsla(220, 18%, 10%, 0.8);
+  background: rgba(39, 42, 35, 0.88);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
-  border: 1px solid hsla(0, 0%, 100%, 0.06);
+  border: 1px solid rgba(255,255,255,0.12);
 }
 
 /* Skeleton shimmer */
@@ -143,7 +160,7 @@
 }
 
 .animate-shimmer {
-  background: linear-gradient(90deg, hsl(220, 16%, 14%) 25%, hsl(220, 14%, 18%) 50%, hsl(220, 16%, 14%) 75%);
+  background: linear-gradient(90deg, #1B1D19 25%, #21241E 50%, #1B1D19 75%);
   background-size: 200% 100%;
   animation: shimmer 1.5s infinite;
 }

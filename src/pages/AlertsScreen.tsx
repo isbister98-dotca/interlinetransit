@@ -6,9 +6,9 @@ import { DepartureRow } from "@/components/transit/DepartureRow";
 import { MOCK_DEPARTURES, MOCK_ALERTS } from "@/lib/mock-data";
 
 const SEVERITY_STYLES = {
-  disruption: { border: "border-destructive/50", icon: AlertTriangle, iconColor: "text-destructive" },
-  warning: { border: "border-warning/50", icon: AlertCircle, iconColor: "text-warning" },
-  info: { border: "border-info/50", icon: Info, iconColor: "text-info" },
+  disruption: { border: "border-l-destructive", icon: AlertTriangle, iconColor: "text-destructive" },
+  warning: { border: "border-l-warning", icon: AlertCircle, iconColor: "text-warning" },
+  info: { border: "border-l-info", icon: Info, iconColor: "text-info" },
 };
 
 export default function AlertsScreen() {
@@ -19,10 +19,10 @@ export default function AlertsScreen() {
       {/* Departures */}
       <div className="mb-6">
         <div className="flex items-center justify-between mb-3">
-          <h2 className="text-sm font-semibold text-foreground">Union Station Departures</h2>
+          <h2 className="text-sm font-bold text-foreground">Union Station Departures</h2>
           <LivePill />
         </div>
-        <div className="flex flex-col gap-2">
+        <div className="flex flex-col">
           {MOCK_DEPARTURES.slice(0, 4).map((d) => (
             <DepartureRow key={d.id} departure={d} />
           ))}
@@ -30,7 +30,7 @@ export default function AlertsScreen() {
       </div>
 
       {/* Alerts */}
-      <h2 className="text-sm font-semibold text-foreground mb-3">Service Alerts</h2>
+      <h2 className="text-sm font-bold text-foreground mb-3">Service Alerts</h2>
 
       {!hasAlerts ? (
         <div className="flex flex-col items-center justify-center py-12 text-center">
@@ -43,16 +43,17 @@ export default function AlertsScreen() {
             const style = SEVERITY_STYLES[alert.severity];
             const Icon = style.icon;
             return (
-              <div key={alert.id} className={cn("bg-surface-1 border rounded-xl p-3", style.border)}>
-                <div className="flex items-start gap-2 mb-2">
-                  <Icon className={cn("w-4 h-4 mt-0.5 shrink-0", style.iconColor)} />
+              <div key={alert.id} className={cn(
+                "bg-card border border-[rgba(255,255,255,0.07)] border-l-[3px] rounded-md p-3.5",
+                style.border
+              )}>
+                <div className="flex items-start gap-3">
+                  <Icon className={cn("w-[18px] h-[18px] mt-0.5 shrink-0", style.iconColor)} />
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap mb-1">
-                      <span className="text-sm font-semibold text-foreground">{alert.title}</span>
-                    </div>
+                    <div className="text-[13px] font-bold text-foreground mb-1">{alert.title}</div>
                     <div className="flex items-center gap-1.5 mb-2">
                       {alert.affectedRoutes.map((r) => (
-                        <RouteChip key={r} routeId={r} agency={alert.agency} />
+                        <RouteChip key={r} routeId={r} agency={alert.agency} size="xs" />
                       ))}
                     </div>
                     <p className="text-xs text-muted-foreground leading-relaxed">{alert.description}</p>

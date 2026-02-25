@@ -14,8 +14,8 @@ export default {
     },
     extend: {
       fontFamily: {
-        sans: ['"DM Sans"', "sans-serif"],
-        mono: ['"DM Mono"', "monospace"],
+        sans: ['"IBM Plex Sans"', "sans-serif"],
+        mono: ['"IBM Plex Mono"', "monospace"],
       },
       colors: {
         border: "hsl(var(--border))",
@@ -62,6 +62,7 @@ export default {
         card: {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
+          hover: "hsl(var(--card-hover))",
         },
         surface: {
           0: "hsl(var(--surface-0))",
@@ -82,9 +83,12 @@ export default {
         },
       },
       borderRadius: {
-        lg: "var(--radius)",
-        md: "calc(var(--radius) - 2px)",
-        sm: "calc(var(--radius) - 4px)",
+        "2xl": "24px",
+        xl: "16px",
+        lg: "12px",
+        md: "8px",
+        sm: "6px",
+        xs: "4px",
       },
       keyframes: {
         "accordion-down": {

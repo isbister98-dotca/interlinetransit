@@ -75,11 +75,12 @@ export interface LeaderboardEntry {
   isYou?: boolean;
 }
 
+/* Brand Guide v4 agency colors — HSL format for use with hsla() */
 export const AGENCY_COLORS: Record<Agency, string> = {
-  GO: "82 85% 55%",    // lime green (brand)
-  UP: "210 100% 52%",  // blue
-  TTC: "0 72% 51%",    // red
-  MiWay: "38 92% 50%", // amber
+  GO: "93 50% 56%",     // Transit Lime #8ECB5A
+  UP: "210 74% 63%",    // Blue #5EA8E8
+  TTC: "0 66% 63%",     // Red #E06060
+  MiWay: "38 76% 54%",  // Amber #DFA832
 };
 
 export const TAB_ITEMS = [
