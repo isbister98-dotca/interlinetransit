@@ -3,7 +3,12 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
-import Index from "./pages/Index";
+import { BottomNav } from "@/components/layout/BottomNav";
+import MapScreen from "@/pages/MapScreen";
+import JourneyScreen from "@/pages/JourneyScreen";
+import AlertsScreen from "@/pages/AlertsScreen";
+import SocialScreen from "@/pages/SocialScreen";
+import ProfileScreen from "@/pages/ProfileScreen";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -14,11 +19,17 @@ const App = () => (
       <Toaster />
       <Sonner />
       <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<Index />} />
-          {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
-          <Route path="*" element={<NotFound />} />
-        </Routes>
+        <div className="min-h-[100dvh] bg-background">
+          <Routes>
+            <Route path="/" element={<MapScreen />} />
+            <Route path="/journey" element={<JourneyScreen />} />
+            <Route path="/alerts" element={<AlertsScreen />} />
+            <Route path="/social" element={<SocialScreen />} />
+            <Route path="/profile" element={<ProfileScreen />} />
+            <Route path="*" element={<NotFound />} />
+          </Routes>
+          <BottomNav />
+        </div>
       </BrowserRouter>
     </TooltipProvider>
   </QueryClientProvider>
