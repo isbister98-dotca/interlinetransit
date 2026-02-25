@@ -14,7 +14,27 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      vehicle_cache: {
+        Row: {
+          agency_status: Json | null
+          id: number
+          updated_at: string
+          vehicles: Json
+        }
+        Insert: {
+          agency_status?: Json | null
+          id?: number
+          updated_at?: string
+          vehicles?: Json
+        }
+        Update: {
+          agency_status?: Json | null
+          id?: number
+          updated_at?: string
+          vehicles?: Json
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
