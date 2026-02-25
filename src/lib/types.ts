@@ -1,4 +1,4 @@
-import { Train, Route, AlertTriangle, Users, User } from "lucide-react";
+import { Train, Route, Users } from "lucide-react";
 
 export type Agency = "GO" | "UP" | "TTC" | "MiWay";
 
@@ -84,9 +84,7 @@ export const AGENCY_COLORS: Record<Agency, string> = {
 };
 
 export const TAB_ITEMS = [
-  { id: "map", label: "Map", icon: Train, path: "/map" },
   { id: "journey", label: "Journey", icon: Route, path: "/journey" },
-  { id: "alerts", label: "Alerts", icon: AlertTriangle, path: "/alerts" },
+  { id: "map", label: "Map", icon: Train, path: "/map" },
   { id: "social", label: "Social", icon: Users, path: "/social" },
-  { id: "profile", label: "Profile", icon: User, path: "/profile" },
 ] as const;

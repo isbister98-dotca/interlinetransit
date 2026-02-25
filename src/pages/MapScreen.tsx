@@ -126,7 +126,7 @@ export default function MapScreen() {
   }, [vehicles, showLayers, syncMarkers]);
 
   return (
-    <div className="relative w-full h-[calc(100dvh-60px)]">
+    <div className="relative w-full h-[calc(100dvh-72px)]">
       <div ref={mapContainerRef} className="w-full h-full z-0" />
 
       {/* Layers toggle */}

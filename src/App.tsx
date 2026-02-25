@@ -6,7 +6,6 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { BottomNav } from "@/components/layout/BottomNav";
 import MapScreen from "@/pages/MapScreen";
 import JourneyScreen from "@/pages/JourneyScreen";
-import AlertsScreen from "@/pages/AlertsScreen";
 import SocialScreen from "@/pages/SocialScreen";
 import ProfileScreen from "@/pages/ProfileScreen";
 import NotFound from "./pages/NotFound";
@@ -24,7 +23,6 @@ const App = () => (
             <Route path="/" element={<Navigate to="/map" replace />} />
             <Route path="/map" element={<MapScreen />} />
             <Route path="/journey" element={<JourneyScreen />} />
-            <Route path="/alerts" element={<AlertsScreen />} />
             <Route path="/social" element={<SocialScreen />} />
             <Route path="/profile" element={<ProfileScreen />} />
             <Route path="*" element={<NotFound />} />
