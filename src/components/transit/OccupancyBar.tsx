@@ -5,22 +5,25 @@ interface OccupancyBarProps {
   className?: string;
 }
 
-const LEVELS = { LOW: 1, MEDIUM: 2, HIGH: 3, FULL: 4 } as const;
+const LEVELS = { LOW: 1, MEDIUM: 3, HIGH: 5, FULL: 5 } as const;
+const TOTAL = 5;
 
 export function OccupancyBar({ level, className }: OccupancyBarProps) {
   const filled = LEVELS[level];
   return (
-    <div className={cn("flex items-center gap-0.5", className)} title={`Occupancy: ${level.toLowerCase()}`}>
-      {[1, 2, 3, 4].map((i) => (
+    <div className={cn("flex items-center gap-[3px]", className)} title={`Occupancy: ${level.toLowerCase()}`}>
+      {Array.from({ length: TOTAL }, (_, i) => (
         <div
           key={i}
           className={cn(
-            "w-1 rounded-full transition-colors",
-            i <= 2 ? "h-2" : i === 3 ? "h-2.5" : "h-3",
-            i <= filled
-              ? filled <= 2 ? "bg-success" : filled === 3 ? "bg-warning" : "bg-destructive"
-              : "bg-muted"
+            "flex-1 h-1 rounded-full",
+            i < filled
+              ? level === "LOW" ? "bg-success" 
+                : level === "MEDIUM" ? "bg-warning" 
+                : "bg-destructive"
+              : "bg-[rgba(255,255,255,0.12)]"
           )}
+          style={{ width: 12 }}
         />
       ))}
     </div>

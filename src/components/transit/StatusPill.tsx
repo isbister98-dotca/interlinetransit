@@ -10,15 +10,15 @@ export function StatusPill({ status, delayMinutes, className }: StatusPillProps)
   return (
     <span
       className={cn(
-        "inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-mono font-medium uppercase tracking-wider",
-        status === "on-time" && "bg-success/15 text-success",
-        status === "delayed" && "bg-warning/15 text-warning",
-        status === "cancelled" && "bg-destructive/15 text-destructive",
+        "inline-flex items-center gap-1.5 px-3 py-[5px] rounded-sm font-mono text-[11px] font-semibold uppercase tracking-[0.03em]",
+        status === "on-time" && "bg-success text-[#0e1210]",
+        status === "delayed" && "bg-warning text-[#150e00]",
+        status === "cancelled" && "bg-destructive text-foreground",
         className
       )}
     >
       {status === "on-time" && "On Time"}
-      {status === "delayed" && `${delayMinutes ?? ""}m late`}
+      {status === "delayed" && `+${delayMinutes ?? ""}m Late`}
       {status === "cancelled" && "Cancelled"}
     </span>
   );

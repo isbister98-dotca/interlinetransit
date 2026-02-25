@@ -22,23 +22,31 @@ function minutesUntil(date: Date) {
 
 export function DepartureRow({ departure, className }: DepartureRowProps) {
   const status = departure.delayMinutes > 0 ? "delayed" : "on-time";
+  const mins = minutesUntil(departure.departureTime);
 
   return (
-    <div className={cn("flex items-center gap-3 px-3 py-2.5 rounded-lg bg-surface-1 hover:bg-surface-2 transition-colors", className)}>
-      <RouteChip routeId={departure.routeId} agency={departure.agency} />
+    <div className={cn(
+      "flex items-center gap-3.5 py-3 border-b border-[rgba(255,255,255,0.07)] last:border-none",
+      className
+    )}>
+      <RouteChip routeId={departure.routeId} agency={departure.agency} size="sm" />
 
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium text-foreground truncate">{departure.destination}</p>
+        <p className="text-[13px] font-semibold text-foreground truncate">{departure.destination}</p>
         <div className="flex items-center gap-2 mt-0.5">
-          <span className="text-xs font-mono text-muted-foreground">{formatTime(departure.departureTime)}</span>
-          {departure.platform && (
-            <span className="text-[10px] text-muted-foreground">P{departure.platform}</span>
-          )}
+          <span className="font-mono text-[9px] text-muted-foreground tracking-[0.06em] uppercase">
+            {departure.platform ? `Platform ${departure.platform}` : formatTime(departure.departureTime)}
+          </span>
         </div>
       </div>
 
-      <div className="flex flex-col items-end gap-1">
-        <span className="text-sm font-mono font-semibold text-primary">{minutesUntil(departure.departureTime)}</span>
+      <div className="flex flex-col items-end gap-1.5">
+        <span className={cn(
+          "font-mono text-lg font-medium leading-none",
+          status === "on-time" ? "text-success" : "text-destructive"
+        )}>
+          {mins}
+        </span>
         <div className="flex items-center gap-2">
           <StatusPill status={status} delayMinutes={departure.delayMinutes} />
           {departure.occupancy && <OccupancyBar level={departure.occupancy} />}
