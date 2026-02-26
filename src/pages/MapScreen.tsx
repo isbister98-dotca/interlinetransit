@@ -245,7 +245,7 @@ export default function MapScreen() {
       }
     }
 
-    setSheetExpanded(true);
+    setSheetExpanded(result.type !== "place");
   }, [resetSheet]);
 
   // Handle vehicle marker click
@@ -320,7 +320,7 @@ export default function MapScreen() {
     const loadingPlace: PlaceResult = { type: "place", osmId: "", name: "Loading…", subtitle: "", lat, lng, displayName: "" };
     setSelectedPlace(loadingPlace);
     setSheetMode("place");
-    setSheetExpanded(true);
+    setSheetExpanded(false);
 
     const { displayName, shortName } = await reverseGeocode(lat, lng);
     setSelectedPlace({ type: "place", osmId: "", name: shortName, subtitle: "", lat, lng, displayName });
@@ -429,11 +429,10 @@ export default function MapScreen() {
           "absolute left-0 right-0 z-[1000] bg-surface-1 rounded-t-xl border-t border-border transition-all duration-300 ease-out",
           isSheetVisible
             ? sheetExpanded
-              ? sheetMode === "vehicle" ? "bottom-0 max-h-[85%]" : "bottom-0 h-[70%]"
-              : sheetMode === "vehicle" ? "bottom-0" : "bottom-0 h-[30%]"
+              ? (sheetMode === "vehicle" || sheetMode === "place") ? "bottom-0 max-h-[85%]" : "bottom-0 h-[70%]"
+              : (sheetMode === "vehicle" || sheetMode === "place") ? "bottom-0" : "bottom-0 h-[30%]"
             : "bottom-0 h-0 overflow-hidden"
         )}
-        style={sheetMode === "vehicle" && isSheetVisible && !sheetExpanded ? {} : undefined}
       >
         {isSheetVisible && (
           <>
