@@ -46,7 +46,7 @@ export async function searchPlaces(query: string): Promise<PlaceResult[]> {
       .map((d) => ({
         type: "place" as const,
         osmId: String(d.osm_id),
-        name: d.address?.amenity || d.address?.building || d.address?.road || d.name || d.display_name?.split(",")[0] || "Unknown",
+        name: d.name || d.address?.amenity || d.address?.building || d.address?.road || d.display_name?.split(",")[0] || "Unknown",
         subtitle: [d.address?.city, d.address?.state].filter(Boolean).join(", ") || d.display_name?.split(",").slice(1, 3).join(",").trim() || "",
         lat: parseFloat(d.lat),
         lng: parseFloat(d.lon),
