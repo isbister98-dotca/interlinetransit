@@ -224,7 +224,7 @@ export default function MapScreen() {
       setRouteLoading(true);
 
       // Fetch route geometry
-      const geo = await fetchRouteGeometry(result.routeId);
+      const geo = await fetchRouteGeometry(result.routeId, result.agency);
       setRouteGeometry(geo);
       setRouteLoading(false);
 
@@ -330,8 +330,8 @@ export default function MapScreen() {
     const activeRoute = selectedRouteRef.current;
 
     vehiclesRef.current.forEach((v) => {
-      // If a route is selected, only show vehicles on that route
-      if (activeRoute && v.routeId !== activeRoute.routeId) return;
+      // If a route is selected, only show vehicles matching both routeId AND agency
+      if (activeRoute && (v.routeId !== activeRoute.routeId || v.agency !== activeRoute.agency)) return;
 
       const marker = L.marker([v.lat, v.lng], { icon: createVehicleIcon(v) });
       marker.on("click", () => handleVehicleClick(v));
