@@ -168,6 +168,7 @@ export default function MapScreen() {
   const overlayLayerRef = useRef<L.LayerGroup | null>(null);
   const vehiclesRef = useRef<Vehicle[]>([]);
   const showLayersRef = useRef(true);
+  const selectedRouteRef = useRef<RouteResult | null>(null);
   const destinationMarkerRef = useRef<L.Marker | null>(null);
   const routeLineRef = useRef<L.Polyline | null>(null);
 
@@ -326,7 +327,12 @@ export default function MapScreen() {
 
     if (!showLayersRef.current) return;
 
+    const activeRoute = selectedRouteRef.current;
+
     vehiclesRef.current.forEach((v) => {
+      // If a route is selected, only show vehicles on that route
+      if (activeRoute && v.routeId !== activeRoute.routeId) return;
+
       const marker = L.marker([v.lat, v.lng], { icon: createVehicleIcon(v) });
       marker.on("click", () => handleVehicleClick(v));
       marker.addTo(layer);
@@ -370,8 +376,9 @@ export default function MapScreen() {
   }, [syncMarkers, handleMapClick]);
 
   useEffect(() => {
+    selectedRouteRef.current = selectedRoute;
     syncMarkers();
-  }, [vehicles, showLayers, syncMarkers]);
+  }, [vehicles, showLayers, selectedRoute, syncMarkers]);
 
   const isSheetVisible = sheetMode !== "hidden";
 
