@@ -172,3 +172,25 @@
 .scrollbar-hide::-webkit-scrollbar {
   display: none;
 }
+
+/* Search bar focus glow */
+.search-bar-container:focus-within {
+  border-color: hsl(93 50% 56% / 0.28);
+  box-shadow: 0 0 0 3px hsl(93 50% 56% / 0.08);
+}
+
+/* Vehicle detail slide-up */
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-slide-up {
+  animation: slide-up 0.3s cubic-bezier(0.20, 1, 0.34, 1) both;
+}
+
+/* Stop marker */
+.stop-marker {
+  background: transparent !important;
+  border: none !important;
+}
