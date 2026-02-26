@@ -24,6 +24,31 @@ import {
 const GTA_CENTER: [number, number] = [43.6532, -79.3832];
 const DARK_TILES = "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png";
 
+function useUserLocation() {
+  const [userLocation, setUserLocation] = useState<[number, number]>(GTA_CENTER);
+  const userMarkerRef = useRef<L.Marker | null>(null);
+
+  useEffect(() => {
+    if (!navigator.geolocation) return;
+
+    const watchId = navigator.geolocation.watchPosition(
+      (pos) => {
+        const loc: [number, number] = [pos.coords.latitude, pos.coords.longitude];
+        setUserLocation(loc);
+        if (userMarkerRef.current) {
+          userMarkerRef.current.setLatLng(loc);
+        }
+      },
+      () => {}, // fallback to GTA_CENTER silently
+      { enableHighAccuracy: true, maximumAge: 10000 }
+    );
+
+    return () => navigator.geolocation.clearWatch(watchId);
+  }, []);
+
+  return { userLocation, userMarkerRef };
+}
+
 // Brand guide v4 SVG icons
 const VEHICLE_ICONS: Record<string, string> = {
   train: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><rect x="5" y="4" width="14" height="13" rx="3" stroke="currentColor" stroke-width="1.7"/><path d="M8.5 17.5 7 20m9 0-1.5-2.5M5 12h14" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><circle cx="9.5" cy="15" r="1.2" fill="currentColor"/><circle cx="14.5" cy="15" r="1.2" fill="currentColor"/></svg>`,
@@ -120,6 +145,9 @@ export default function MapScreen() {
   const [showLayers, setShowLayers] = useState(true);
   const [sheetExpanded, setSheetExpanded] = useState(false);
   const [sheetMode, setSheetMode] = useState<SheetMode>("nearby");
+
+  // User geolocation
+  const { userLocation, userMarkerRef } = useUserLocation();
 
   // Sheet data
   const [selectedPlace, setSelectedPlace] = useState<PlaceResult | null>(null);
@@ -232,7 +260,7 @@ export default function MapScreen() {
     if (!selectedPlace || !mapRef.current) return;
     setPlaceRouteLoading(true);
 
-    const from: [number, number] = GTA_CENTER;
+    const from: [number, number] = userLocation;
     const to: [number, number] = [selectedPlace.lat, selectedPlace.lng];
 
     try {
@@ -263,7 +291,7 @@ export default function MapScreen() {
     } catch { /* ignore */ }
 
     setPlaceRouteLoading(false);
-  }, [selectedPlace]);
+  }, [selectedPlace, userLocation]);
 
   // Track vehicle
   const handleTrackVehicle = useCallback(() => {
@@ -313,14 +341,15 @@ export default function MapScreen() {
     (container as any)._leaflet_id = null;
 
     const map = L.map(container, {
-      center: GTA_CENTER,
-      zoom: 11,
+      center: userLocation,
+      zoom: 13,
       zoomControl: false,
       attributionControl: false,
     });
 
     L.tileLayer(DARK_TILES, { maxZoom: 18 }).addTo(map);
-    L.marker(GTA_CENTER, { icon: createUserIcon() }).addTo(map);
+    const userMarker = L.marker(userLocation, { icon: createUserIcon() }).addTo(map);
+    userMarkerRef.current = userMarker;
 
     const vehicleLayer = L.layerGroup().addTo(map);
     const overlayLayer = L.layerGroup().addTo(map);
