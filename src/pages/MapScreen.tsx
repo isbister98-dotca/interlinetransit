@@ -359,7 +359,7 @@ export default function MapScreen() {
       attributionControl: false,
     });
 
-    L.tileLayer(DARK_TILES, { maxZoom: 18 }).addTo(map);
+    L.tileLayer(DARK_TILES, { maxZoom: 18, updateWhenIdle: false, updateWhenZooming: false }).addTo(map);
     const userMarker = L.marker(userLocation, { icon: createUserIcon() }).addTo(map);
     userMarkerRef.current = userMarker;
 
@@ -371,9 +371,14 @@ export default function MapScreen() {
 
     map.on("click", (e: L.LeafletMouseEvent) => handleMapClick(e));
 
+    // Fix tile loading by ensuring map knows its container size
+    requestAnimationFrame(() => map.invalidateSize());
+    const resizeTimer = setTimeout(() => map.invalidateSize(), 300);
+
     syncMarkers();
 
     return () => {
+      clearTimeout(resizeTimer);
       map.remove();
       mapRef.current = null;
       vehicleLayerRef.current = null;
