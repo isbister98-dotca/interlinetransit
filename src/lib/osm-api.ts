@@ -121,7 +121,15 @@ export interface RouteGeometry {
   stops: { name: string; lat: number; lng: number }[];
 }
 
-export async function fetchRouteGeometry(routeRef: string): Promise<RouteGeometry | null> {
+// Map agency to OSM route types for better matching
+const AGENCY_ROUTE_TYPES: Record<string, string[]> = {
+  GO: ["train", "bus"],
+  UP: ["train"],
+  TTC: ["subway", "tram", "bus"],
+  MiWay: ["bus"],
+};
+
+export async function fetchRouteGeometry(routeRef: string, agency?: string): Promise<RouteGeometry | null> {
   try {
     const query = `[out:json];relation["type"="route"]["route"~"train|subway|tram|bus"]["ref"="${routeRef}"](43.2,-80.2,44.2,-78.5);out geom;`;
     const res = await fetch(
@@ -131,32 +139,124 @@ export async function fetchRouteGeometry(routeRef: string): Promise<RouteGeometr
 
     if (!data.elements?.length) return null;
 
-    const relation = data.elements[0];
-    const coords: [number, number][] = [];
-    const stops: { name: string; lat: number; lng: number }[] = [];
+    // Pick the best relation matching the agency
+    let relation = data.elements[0];
+    if (agency && data.elements.length > 1) {
+      const preferred = AGENCY_ROUTE_TYPES[agency] || [];
+      const agencyLower = agency.toLowerCase();
+      
+      // Score each relation by how well it matches the agency
+      const scored = data.elements.map((el: any) => {
+        let score = 0;
+        const operator = (el.tags?.operator || el.tags?.network || "").toLowerCase();
+        const routeType = el.tags?.route || "";
+        
+        // Operator/network name match
+        if (operator.includes(agencyLower) || operator.includes("go transit") && agency === "GO") score += 10;
+        if (operator.includes("ttc") && agency === "TTC") score += 10;
+        if (operator.includes("miway") && agency === "MiWay") score += 10;
+        if (operator.includes("up express") && agency === "UP") score += 10;
+        
+        // Route type match
+        if (preferred.includes(routeType)) score += 5;
+        
+        // Prefer relations with more geometry (more complete)
+        const memberCount = el.members?.filter((m: any) => m.type === "way" && m.geometry).length || 0;
+        score += Math.min(memberCount, 5);
+        
+        return { el, score };
+      });
+      
+      scored.sort((a: any, b: any) => b.score - a.score);
+      relation = scored[0].el;
+    }
 
-    // Extract geometry from ways
+    const stops: { name: string; lat: number; lng: number }[] = [];
+    const waySegments: [number, number][][] = [];
+
+    // Extract geometry from ways as ordered segments
     if (relation.members) {
       relation.members.forEach((m: any) => {
-        if (m.type === "way" && m.geometry) {
-          m.geometry.forEach((pt: any) => {
-            coords.push([pt.lat, pt.lon]);
-          });
+        if (m.type === "way" && m.geometry && m.geometry.length > 0) {
+          const segment: [number, number][] = m.geometry.map((pt: any) => [pt.lat, pt.lon]);
+          waySegments.push(segment);
         }
-        if (m.type === "node" && m.role === "stop" && m.lat && m.lon) {
-          stops.push({
-            name: m.tags?.name || `Stop`,
-            lat: m.lat,
-            lng: m.lon,
-          });
+        if (m.type === "node" && (m.role === "stop" || m.role === "stop_entry_only" || m.role === "stop_exit_only") && m.lat && m.lon) {
+          const name = m.tags?.name || "Stop";
+          // Deduplicate stops by name
+          if (!stops.find(s => s.name === name && Math.abs(s.lat - m.lat) < 0.001)) {
+            stops.push({ name, lat: m.lat, lng: m.lon });
+          }
         }
       });
     }
+
+    // Order segments into a continuous line by connecting endpoints
+    const coords = orderSegments(waySegments);
 
     return { coords, stops };
   } catch {
     return null;
   }
+}
+
+/** Connect way segments into a continuous ordered line */
+function orderSegments(segments: [number, number][][]): [number, number][] {
+  if (segments.length === 0) return [];
+  if (segments.length === 1) return segments[0];
+
+  const used = new Set<number>();
+  const result: [number, number][] = [...segments[0]];
+  used.add(0);
+
+  for (let iter = 1; iter < segments.length; iter++) {
+    let bestIdx = -1;
+    let bestDist = Infinity;
+    let flipBest = false;
+    let prependBest = false;
+
+    const tailPt = result[result.length - 1];
+    const headPt = result[0];
+
+    for (let i = 0; i < segments.length; i++) {
+      if (used.has(i)) continue;
+      const seg = segments[i];
+      const segStart = seg[0];
+      const segEnd = seg[seg.length - 1];
+
+      // Try appending (normal or flipped)
+      const d1 = dist(tailPt, segStart);
+      const d2 = dist(tailPt, segEnd);
+      // Try prepending (normal or flipped)
+      const d3 = dist(headPt, segEnd);
+      const d4 = dist(headPt, segStart);
+
+      if (d1 < bestDist) { bestDist = d1; bestIdx = i; flipBest = false; prependBest = false; }
+      if (d2 < bestDist) { bestDist = d2; bestIdx = i; flipBest = true; prependBest = false; }
+      if (d3 < bestDist) { bestDist = d3; bestIdx = i; flipBest = false; prependBest = true; }
+      if (d4 < bestDist) { bestDist = d4; bestIdx = i; flipBest = true; prependBest = true; }
+    }
+
+    if (bestIdx === -1) break;
+    used.add(bestIdx);
+
+    let seg = segments[bestIdx];
+    if (flipBest) seg = [...seg].reverse();
+
+    if (prependBest) {
+      result.unshift(...seg);
+    } else {
+      result.push(...seg);
+    }
+  }
+
+  return result;
+}
+
+function dist(a: [number, number], b: [number, number]): number {
+  const dx = a[0] - b[0];
+  const dy = a[1] - b[1];
+  return dx * dx + dy * dy;
 }
 
 // --- Station departures (mock) ---
