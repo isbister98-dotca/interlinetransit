@@ -249,11 +249,17 @@ export default function MapScreen() {
   }, [resetSheet]);
 
   // Handle vehicle marker click
-  const handleVehicleClick = useCallback((vehicle: Vehicle) => {
+  const handleVehicleClick = useCallback(async (vehicle: Vehicle) => {
     clearOverlays();
     setSelectedVehicle(vehicle);
     setSheetMode("vehicle");
-    setSheetExpanded(true);
+    setSheetExpanded(false);
+    
+    // Fetch route geometry for stop timeline
+    setRouteLoading(true);
+    const geo = await fetchRouteGeometry(vehicle.routeId, vehicle.agency);
+    setRouteGeometry(geo);
+    setRouteLoading(false);
   }, [clearOverlays]);
 
   // Get directions for place
@@ -422,9 +428,12 @@ export default function MapScreen() {
         className={cn(
           "absolute left-0 right-0 z-[1000] bg-surface-1 rounded-t-xl border-t border-border transition-all duration-300 ease-out",
           isSheetVisible
-            ? sheetExpanded ? "bottom-0 h-[70%]" : "bottom-0 h-[30%]"
+            ? sheetExpanded
+              ? sheetMode === "vehicle" ? "bottom-0 max-h-[85%]" : "bottom-0 h-[70%]"
+              : sheetMode === "vehicle" ? "bottom-0" : "bottom-0 h-[30%]"
             : "bottom-0 h-0 overflow-hidden"
         )}
+        style={sheetMode === "vehicle" && isSheetVisible && !sheetExpanded ? {} : undefined}
       >
         {isSheetVisible && (
           <>
@@ -483,6 +492,9 @@ export default function MapScreen() {
                 <SheetVehicleDetail
                   vehicle={selectedVehicle}
                   onTrack={handleTrackVehicle}
+                  routeGeometry={routeGeometry}
+                  routeLoading={routeLoading}
+                  expanded={sheetExpanded}
                 />
               )}
             </div>
