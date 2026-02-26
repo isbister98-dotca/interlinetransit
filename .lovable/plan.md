@@ -1,74 +1,117 @@
 
 
-## Navigation Restructure and Layout Fix
+## Search Bar and Dynamic Bottom Sheet
 
 ### Overview
-Reduce bottom nav to 3 tabs (Journey | Map | Social), merge alerts into Journey, add user profile header + stats to Social, and fix the map bottom sheet so it sits above the nav bar without overlapping.
+Add a brand-guide-styled search bar to the map screen with autocomplete results for places, routes, and stations via OSM APIs. The bottom sheet becomes a dynamic context panel that changes content based on what's selected (search result, vehicle tap, or default nearby stops).
+
+### Search Bar Design
+Matches the uploaded screenshot exactly:
+- Dark card background (`#1B1D19`), 1px border (`rgba(255,255,255,0.12)`), rounded-lg
+- Search icon (magnifying glass) on the left in muted color
+- X clear button on right when text is present
+- IBM Plex Sans placeholder text
+- Positioned at top of map, full width with padding
+- Dropdown results appear below with location pin icon + name + subtitle
+
+### Architecture
+
+**New state machine for the bottom sheet context:**
+```text
+"nearby"   --> default: shows nearby departures (current behavior)
+"place"    --> searched place: address, distance, "Route To" button
+"route"    --> searched route: route line on map, stops, active vehicles, avg speed, occupancy
+"station"  --> searched station: upcoming departures, alerts for that station
+"vehicle"  --> tapped vehicle marker: speed, direction, occupancy, position on route, on-time status
+```
 
 ### Changes
 
-#### 1. Reduce TAB_ITEMS to 3 tabs (`src/lib/types.ts`)
-- Remove `alerts` and `profile` entries
-- Reorder to: Journey, Map, Social (Map stays center as the primary tab)
+#### 1. New component: `src/components/map/SearchBar.tsx`
+- Controlled input with debounced OSM Nominatim search (forward geocoding)
+- Searches 3 categories simultaneously:
+  - **Places**: `https://nominatim.openstreetmap.org/search?q={query}&format=jsonv2&addressdetails=1&limit=5&viewbox=-80.2,44.2,-78.5,43.2&bounded=1`
+  - **Stations**: Same API but filtered for results with `type=station` or `class=railway`/`class=public_transport`
+  - **Routes**: Match against the live vehicles list by `routeId` or `routeLabel` (local filter, no API call)
+- Results grouped by category with icons (pin for places, train for stations, route chip for routes)
+- On focus: emit callback to collapse bottom sheet
+- On select: emit result type + data, clear search
 
-#### 2. Update routing (`src/App.tsx`)
-- Remove `/alerts` route (or redirect to `/journey`)
-- Keep `/profile` as a hidden route (accessible from Social tab header)
-- Change default redirect from `/map` to `/map` (no change needed)
+#### 2. New component: `src/components/map/SheetPlaceDetail.tsx`
+- Shows place name, full address, distance/duration
+- "Route To" button triggers OSRM directions (reuses existing `handleGetDirections` logic)
+- Destination marker placed on map
 
-#### 3. Merge alerts into Journey tab (`src/pages/JourneyScreen.tsx`)
-- Import `MOCK_ALERTS`, alert icons, `RouteChip`, severity styles from AlertsScreen
-- Add a "Service Alerts" section below the journey results
-- Include the same alert card layout (severity left-border, icon, description, affected route chips)
-- Show "All services running normally" empty state when no alerts
+#### 3. New component: `src/components/map/SheetRouteDetail.tsx`
+- Shows route name, agency chip, active vehicle count
+- Stats row: avg speed, occupancy level
+- List of stops along the route (fetched from GTFS data or approximated from vehicle positions)
+- Map actions: draw route polyline, show stop markers, highlight active vehicles
 
-#### 4. Add user profile header + stats to Social tab (`src/pages/SocialScreen.tsx`)
-- Add a tappable profile row at the top: avatar circle (YU) + "Your Name" + ChevronRight, linking to `/profile`
-- Add a compact 4-stat horizontal strip below: 72 trips | 48 kg CO2 | LW most used | 12-day streak
-- Keep existing leaderboard content below unchanged
+#### 4. New component: `src/components/map/SheetStationDetail.tsx`
+- Shows station name, agencies serving it
+- Upcoming departures list (filtered from MOCK_DEPARTURES or live data)
+- Active alerts affecting this station (filtered from MOCK_ALERTS)
 
-#### 5. Fix map bottom sheet spacing (`src/pages/MapScreen.tsx`)
-- The bottom sheet currently uses `bottom-0` which overlaps the nav bar
-- Change the map container height to `h-[calc(100dvh-72px)]` to account for the nav bar (~60px + margin)
-- Change the bottom sheet to position above the nav by using `bottom-[72px]` or adjusting the parent container so `bottom-0` aligns above the nav
-- Adjust collapsed height from `h-[30%]` to a fixed pixel value or percentage that fits cleanly
-- The key fix: the map screen's outer container should account for the nav bar height, and the bottom sheet should sit within that space
+#### 5. New component: `src/components/map/SheetVehicleDetail.tsx`
+- Animated slide-in when a vehicle marker is tapped
+- Shows: route label, agency chip, current speed, bearing/direction, destination/endpoint
+- Occupancy bar, on-time status pill
+- Position indicator (simple progress bar showing where on the route the vehicle is)
+- "Track" button to follow the vehicle on map
 
-### Technical Details
+#### 6. Updated: `src/pages/MapScreen.tsx`
+- Add `SearchBar` component at top, positioned above Layers button
+- Move Layers button to right side to make room for search bar
+- Add `sheetMode` state: `"nearby" | "place" | "route" | "station" | "vehicle" | "hidden"`
+- When search bar is focused: `sheetMode = "hidden"` (collapse sheet to 0 height with animation)
+- When search result selected: set appropriate `sheetMode` + data, expand sheet
+- Vehicle marker click handler: instead of Leaflet popup, set `sheetMode = "vehicle"` with vehicle data, animate sheet up
+- Remove Leaflet popup binding from vehicle markers, replace with click-to-select behavior
+- Bottom sheet renders different content based on `sheetMode`
+- Route search: use Overpass API to fetch route geometry and stops for the selected route
 
-**`src/lib/types.ts`** -- lines 86-92:
-```typescript
-export const TAB_ITEMS = [
-  { id: "journey", label: "Journey", icon: Route, path: "/journey" },
-  { id: "map", label: "Map", icon: Train, path: "/map" },
-  { id: "social", label: "Social", icon: Users, path: "/social" },
-] as const;
+#### 7. New utility: `src/lib/osm-api.ts`
+- `searchPlaces(query)` -- Nominatim forward geocoding with GTA bounding box
+- `fetchStationDepartures(stationName)` -- placeholder that filters mock data by station
+- `fetchRouteGeometry(routeRef)` -- Overpass API query for route relation geometry:
+  ```
+  [out:json];relation["type"="route"]["route"~"train|subway|tram|bus"]["ref"="{routeRef}"](43.2,-80.2,44.2,-78.5);out geom;
+  ```
+- `fetchStationsByName(query)` -- Nominatim search filtered to `public_transport=station` or `railway=station` tags
+
+#### 8. CSS additions in `src/index.css`
+- Search bar focus glow using `--brand-border` color
+- Sheet transition for hiding/showing (slide down to 0, slide up on result)
+- Vehicle detail card entrance animation
+
+### Technical Notes
+
+**OSM Tags for Stations:**
+- `public_transport=station`
+- `railway=station`
+- `railway=halt`
+- These are correct OSM tags for transit stations
+
+**Search debounce:** 300ms to avoid hammering Nominatim (their usage policy requires max 1 req/sec)
+
+**Route geometry via Overpass API:**
 ```
+https://overpass-api.de/api/interpreter?data=[out:json];relation["type"="route"]["ref"="LW"](43.2,-80.2,44.2,-78.5);out geom;
+```
+This returns the full route geometry including stops as members.
 
-**`src/App.tsx`**:
-- Remove AlertsScreen import and route
-- Keep ProfileScreen import and `/profile` route (hidden from nav)
+**Vehicle click replaces popup:** Instead of `marker.bindPopup(...)`, use `marker.on("click", ...)` to set the selected vehicle in React state and animate the bottom sheet.
 
-**`src/pages/MapScreen.tsx`**:
-- Change outer container to `h-[calc(100dvh-72px)]` to leave room for nav
-- Bottom sheet uses `bottom-0` within this container, so it naturally sits above the nav
-- Collapsed sheet height stays at `h-[30%]`, expanded at `h-[70%]` -- these percentages now reference the shorter container
+### Files to Create
+- `src/components/map/SearchBar.tsx`
+- `src/components/map/SheetPlaceDetail.tsx`
+- `src/components/map/SheetRouteDetail.tsx`
+- `src/components/map/SheetStationDetail.tsx`
+- `src/components/map/SheetVehicleDetail.tsx`
+- `src/lib/osm-api.ts`
 
-**`src/pages/JourneyScreen.tsx`**:
-- Add imports: `AlertTriangle`, `AlertCircle`, `Info`, `CheckCircle2`, `MOCK_ALERTS`, `RouteChip`
-- Add `SEVERITY_STYLES` map
-- After the journey results section, add a divider and "Service Alerts" heading
-- Render alert cards with severity border, icon, title, route chips, description
-
-**`src/pages/SocialScreen.tsx`**:
-- Add imports: `useNavigate`, `ChevronRight`, `Train`, `Leaf`, `Flame`, `MapPin`
-- Add profile header row at top (tappable, navigates to `/profile`)
-- Add stats strip: 4 items in a horizontal row with dividers between them
-- Existing leaderboard content remains below
-
-### Files Modified
-- `src/lib/types.ts`
-- `src/App.tsx`
+### Files to Modify
 - `src/pages/MapScreen.tsx`
-- `src/pages/JourneyScreen.tsx`
-- `src/pages/SocialScreen.tsx`
+- `src/index.css`
+
