@@ -7,6 +7,19 @@ import { AGENCY_COLORS, type Vehicle } from "@/lib/types";
 import { LivePill } from "@/components/transit/LivePill";
 import { DepartureRow } from "@/components/transit/DepartureRow";
 import { useVehicles } from "@/hooks/use-vehicles";
+import { SearchBar } from "@/components/map/SearchBar";
+import { SheetPlaceDetail } from "@/components/map/SheetPlaceDetail";
+import { SheetRouteDetail } from "@/components/map/SheetRouteDetail";
+import { SheetStationDetail } from "@/components/map/SheetStationDetail";
+import { SheetVehicleDetail } from "@/components/map/SheetVehicleDetail";
+import {
+  type SearchResult,
+  type PlaceResult,
+  type StationResult,
+  type RouteResult,
+  type RouteGeometry,
+  fetchRouteGeometry,
+} from "@/lib/osm-api";
 
 const GTA_CENTER: [number, number] = [43.6532, -79.3832];
 const DARK_TILES = "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png";
@@ -19,7 +32,6 @@ const VEHICLE_ICONS: Record<string, string> = {
   bus: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><rect x="3" y="5" width="18" height="13" rx="2.5" stroke="currentColor" stroke-width="1.7"/><path d="M3 10.5h18M7.5 18.5v2m9-2v2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><circle cx="8" cy="14.5" r="1.2" fill="currentColor"/><circle cx="16" cy="14.5" r="1.2" fill="currentColor"/></svg>`,
 };
 
-// --- Reverse Geocoding via Nominatim ---
 async function reverseGeocode(lat: number, lng: number): Promise<{ displayName: string; shortName: string }> {
   try {
     const res = await fetch(
@@ -33,20 +45,6 @@ async function reverseGeocode(lat: number, lng: number): Promise<{ displayName: 
   } catch {
     return { displayName: "Could not fetch address", shortName: "Unknown" };
   }
-}
-
-// --- Routing via OSRM ---
-async function fetchRoute(from: [number, number], to: [number, number]): Promise<[number, number][]> {
-  try {
-    const res = await fetch(
-      `https://router.project-osrm.org/route/v1/driving/${from[1]},${from[0]};${to[1]},${to[0]}?overview=full&geometries=geojson`
-    );
-    const data = await res.json();
-    if (data.routes?.[0]?.geometry?.coordinates) {
-      return data.routes[0].geometry.coordinates.map((c: number[]) => [c[1], c[0]] as [number, number]);
-    }
-  } catch { /* ignore */ }
-  return [];
 }
 
 function formatDuration(seconds: number) {
@@ -68,19 +66,13 @@ function createVehicleIcon(vehicle: Vehicle) {
   return L.divIcon({
     className: "vehicle-marker",
     html: `<div style="
-      display: flex;
-      align-items: center;
-      gap: 4px;
-      background: hsl(${color});
-      color: #0e0f0d;
-      font-size: 10px;
-      font-weight: 700;
+      display: flex; align-items: center; gap: 4px;
+      background: hsl(${color}); color: #0e0f0d;
+      font-size: 10px; font-weight: 700;
       font-family: 'IBM Plex Mono', monospace;
-      padding: 3px 7px 3px 5px;
-      border-radius: 8px;
-      white-space: nowrap;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.5);
-      pointer-events: auto;
+      padding: 3px 7px 3px 5px; border-radius: 8px;
+      white-space: nowrap; box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+      pointer-events: auto; cursor: pointer;
     ">${icon}<span>${vehicle.routeId}</span></div>`,
     iconSize: [50, 24],
     iconAnchor: [25, 12],
@@ -113,36 +105,49 @@ function createDestinationIcon() {
   });
 }
 
-interface SelectedPlace {
-  lat: number;
-  lng: number;
-  shortName: string;
-  displayName: string;
-  distance?: string;
-  duration?: string;
-  loading: boolean;
+function createStopIcon() {
+  return L.divIcon({
+    className: "stop-marker",
+    html: `<div style="width:8px;height:8px;border-radius:50%;background:hsl(93,50%,56%);border:2px solid #0e0f0d;box-shadow:0 1px 4px rgba(0,0,0,0.5);"></div>`,
+    iconSize: [8, 8],
+    iconAnchor: [4, 4],
+  });
 }
+
+type SheetMode = "nearby" | "place" | "route" | "station" | "vehicle" | "hidden";
 
 export default function MapScreen() {
   const [showLayers, setShowLayers] = useState(true);
   const [sheetExpanded, setSheetExpanded] = useState(false);
-  const [selectedPlace, setSelectedPlace] = useState<SelectedPlace | null>(null);
+  const [sheetMode, setSheetMode] = useState<SheetMode>("nearby");
+
+  // Sheet data
+  const [selectedPlace, setSelectedPlace] = useState<PlaceResult | null>(null);
+  const [placeDistance, setPlaceDistance] = useState<string | undefined>();
+  const [placeDuration, setPlaceDuration] = useState<string | undefined>();
+  const [placeRouteLoading, setPlaceRouteLoading] = useState(false);
+
+  const [selectedRoute, setSelectedRoute] = useState<RouteResult | null>(null);
+  const [routeGeometry, setRouteGeometry] = useState<RouteGeometry | null>(null);
   const [routeLoading, setRouteLoading] = useState(false);
+
+  const [selectedStation, setSelectedStation] = useState<StationResult | null>(null);
+  const [selectedVehicle, setSelectedVehicle] = useState<Vehicle | null>(null);
 
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
   const vehicleLayerRef = useRef<L.LayerGroup | null>(null);
+  const overlayLayerRef = useRef<L.LayerGroup | null>(null);
   const vehiclesRef = useRef<Vehicle[]>([]);
   const showLayersRef = useRef(true);
   const destinationMarkerRef = useRef<L.Marker | null>(null);
   const routeLineRef = useRef<L.Polyline | null>(null);
 
   const { vehicles } = useVehicles();
-
   vehiclesRef.current = vehicles;
   showLayersRef.current = showLayers;
 
-  const clearRoute = useCallback(() => {
+  const clearOverlays = useCallback(() => {
     if (destinationMarkerRef.current && mapRef.current) {
       mapRef.current.removeLayer(destinationMarkerRef.current);
       destinationMarkerRef.current = null;
@@ -151,71 +156,140 @@ export default function MapScreen() {
       mapRef.current.removeLayer(routeLineRef.current);
       routeLineRef.current = null;
     }
-    setSelectedPlace(null);
+    overlayLayerRef.current?.clearLayers();
   }, []);
 
+  const resetSheet = useCallback(() => {
+    clearOverlays();
+    setSheetMode("nearby");
+    setSelectedPlace(null);
+    setSelectedRoute(null);
+    setSelectedStation(null);
+    setSelectedVehicle(null);
+    setPlaceDistance(undefined);
+    setPlaceDuration(undefined);
+    setRouteGeometry(null);
+  }, [clearOverlays]);
+
+  // Handle search result selection
+  const handleSearchSelect = useCallback(async (result: SearchResult) => {
+    resetSheet();
+    const map = mapRef.current;
+    if (!map) return;
+
+    if (result.type === "place") {
+      setSelectedPlace(result);
+      setSheetMode("place");
+      map.flyTo([result.lat, result.lng], 16, { duration: 1 });
+      const marker = L.marker([result.lat, result.lng], { icon: createDestinationIcon() }).addTo(map);
+      destinationMarkerRef.current = marker;
+    } else if (result.type === "station") {
+      setSelectedStation(result);
+      setSheetMode("station");
+      map.flyTo([result.lat, result.lng], 16, { duration: 1 });
+      const marker = L.marker([result.lat, result.lng], { icon: createDestinationIcon() }).addTo(map);
+      destinationMarkerRef.current = marker;
+    } else if (result.type === "route") {
+      setSelectedRoute(result);
+      setSheetMode("route");
+      setRouteLoading(true);
+
+      // Fetch route geometry
+      const geo = await fetchRouteGeometry(result.routeId);
+      setRouteGeometry(geo);
+      setRouteLoading(false);
+
+      if (geo && geo.coords.length > 0) {
+        const polyline = L.polyline(geo.coords, {
+          color: "hsl(93, 50%, 56%)",
+          weight: 3,
+          opacity: 0.7,
+        }).addTo(overlayLayerRef.current || map);
+
+        geo.stops.forEach((s) => {
+          L.marker([s.lat, s.lng], { icon: createStopIcon() })
+            .bindTooltip(s.name, { className: "dark-popup", direction: "top", offset: [0, -6] })
+            .addTo(overlayLayerRef.current || map);
+        });
+
+        map.fitBounds(polyline.getBounds(), { padding: [60, 100] });
+      }
+    }
+
+    setSheetExpanded(true);
+  }, [resetSheet]);
+
+  // Handle vehicle marker click
+  const handleVehicleClick = useCallback((vehicle: Vehicle) => {
+    clearOverlays();
+    setSelectedVehicle(vehicle);
+    setSheetMode("vehicle");
+    setSheetExpanded(true);
+  }, [clearOverlays]);
+
+  // Get directions for place
+  const handleGetDirections = useCallback(async () => {
+    if (!selectedPlace || !mapRef.current) return;
+    setPlaceRouteLoading(true);
+
+    const from: [number, number] = GTA_CENTER;
+    const to: [number, number] = [selectedPlace.lat, selectedPlace.lng];
+
+    try {
+      const res = await fetch(
+        `https://router.project-osrm.org/route/v1/driving/${from[1]},${from[0]};${to[1]},${to[0]}?overview=full&geometries=geojson`
+      );
+      const data = await res.json();
+
+      if (data.routes?.[0]) {
+        const route = data.routes[0];
+        const coords: [number, number][] = route.geometry.coordinates.map((c: number[]) => [c[1], c[0]]);
+
+        if (routeLineRef.current) mapRef.current.removeLayer(routeLineRef.current);
+
+        const polyline = L.polyline(coords, {
+          color: "hsl(93, 50%, 56%)",
+          weight: 4,
+          opacity: 0.8,
+          dashArray: "8, 6",
+        }).addTo(mapRef.current);
+        routeLineRef.current = polyline;
+
+        mapRef.current.fitBounds(polyline.getBounds(), { padding: [60, 60] });
+
+        setPlaceDistance(formatDistance(route.distance));
+        setPlaceDuration(formatDuration(route.duration));
+      }
+    } catch { /* ignore */ }
+
+    setPlaceRouteLoading(false);
+  }, [selectedPlace]);
+
+  // Track vehicle
+  const handleTrackVehicle = useCallback(() => {
+    if (!selectedVehicle || !mapRef.current) return;
+    mapRef.current.flyTo([selectedVehicle.lat, selectedVehicle.lng], 15, { duration: 0.8 });
+  }, [selectedVehicle]);
+
+  // Handle map click (reverse geocode → place mode)
   const handleMapClick = useCallback(async (e: L.LeafletMouseEvent) => {
     const { lat, lng } = e.latlng;
     const map = mapRef.current;
     if (!map) return;
 
-    // Clear previous
-    if (destinationMarkerRef.current) map.removeLayer(destinationMarkerRef.current);
-    if (routeLineRef.current) map.removeLayer(routeLineRef.current);
-    routeLineRef.current = null;
+    resetSheet();
 
-    // Place destination marker
     const marker = L.marker([lat, lng], { icon: createDestinationIcon() }).addTo(map);
     destinationMarkerRef.current = marker;
 
-    setSelectedPlace({ lat, lng, shortName: "Loading…", displayName: "", loading: true });
+    const loadingPlace: PlaceResult = { type: "place", osmId: "", name: "Loading…", subtitle: "", lat, lng, displayName: "" };
+    setSelectedPlace(loadingPlace);
+    setSheetMode("place");
+    setSheetExpanded(true);
 
-    // Reverse geocode
     const { displayName, shortName } = await reverseGeocode(lat, lng);
-    setSelectedPlace({ lat, lng, shortName, displayName, loading: false });
-  }, []);
-
-  const handleGetDirections = useCallback(async () => {
-    if (!selectedPlace || !mapRef.current) return;
-    setRouteLoading(true);
-
-    const from: [number, number] = GTA_CENTER; // User location
-    const to: [number, number] = [selectedPlace.lat, selectedPlace.lng];
-
-    // Fetch route
-    const res = await fetch(
-      `https://router.project-osrm.org/route/v1/driving/${from[1]},${from[0]};${to[1]},${to[0]}?overview=full&geometries=geojson`
-    );
-    const data = await res.json();
-
-    if (data.routes?.[0]) {
-      const route = data.routes[0];
-      const coords: [number, number][] = route.geometry.coordinates.map((c: number[]) => [c[1], c[0]]);
-
-      // Remove old route line
-      if (routeLineRef.current) mapRef.current.removeLayer(routeLineRef.current);
-
-      // Draw route
-      const polyline = L.polyline(coords, {
-        color: "hsl(93, 50%, 56%)",
-        weight: 4,
-        opacity: 0.8,
-        dashArray: "8, 6",
-      }).addTo(mapRef.current);
-      routeLineRef.current = polyline;
-
-      // Fit bounds
-      mapRef.current.fitBounds(polyline.getBounds(), { padding: [60, 60] });
-
-      setSelectedPlace(prev => prev ? {
-        ...prev,
-        distance: formatDistance(route.distance),
-        duration: formatDuration(route.duration),
-      } : null);
-    }
-
-    setRouteLoading(false);
-  }, [selectedPlace]);
+    setSelectedPlace({ type: "place", osmId: "", name: shortName, subtitle: "", lat, lng, displayName });
+  }, [resetSheet]);
 
   const syncMarkers = useCallback(() => {
     const layer = vehicleLayerRef.current;
@@ -226,14 +300,10 @@ export default function MapScreen() {
 
     vehiclesRef.current.forEach((v) => {
       const marker = L.marker([v.lat, v.lng], { icon: createVehicleIcon(v) });
-      marker.bindPopup(
-        `<div style="font-family:'IBM Plex Sans',sans-serif;font-size:13px;font-weight:700;margin-bottom:4px">${v.routeLabel}</div>
-         <div style="font-family:'IBM Plex Mono',monospace;font-size:9px;color:#7D8578;letter-spacing:0.06em;text-transform:uppercase">${v.agency} · ${v.routeId} · ${v.speed != null ? v.speed + ' km/h' : ''}</div>`,
-        { className: "dark-popup", closeButton: false }
-      );
+      marker.on("click", () => handleVehicleClick(v));
       marker.addTo(layer);
     });
-  }, []);
+  }, [handleVehicleClick]);
 
   // Initialize map
   useEffect(() => {
@@ -253,13 +323,12 @@ export default function MapScreen() {
     L.marker(GTA_CENTER, { icon: createUserIcon() }).addTo(map);
 
     const vehicleLayer = L.layerGroup().addTo(map);
+    const overlayLayer = L.layerGroup().addTo(map);
     mapRef.current = map;
     vehicleLayerRef.current = vehicleLayer;
+    overlayLayerRef.current = overlayLayer;
 
-    // Click handler for reverse geocoding
-    map.on("click", (e: L.LeafletMouseEvent) => {
-      handleMapClick(e);
-    });
+    map.on("click", (e: L.LeafletMouseEvent) => handleMapClick(e));
 
     syncMarkers();
 
@@ -267,93 +336,122 @@ export default function MapScreen() {
       map.remove();
       mapRef.current = null;
       vehicleLayerRef.current = null;
+      overlayLayerRef.current = null;
     };
   }, [syncMarkers, handleMapClick]);
 
-  // Update markers when vehicles or showLayers change
   useEffect(() => {
     syncMarkers();
   }, [vehicles, showLayers, syncMarkers]);
+
+  const isSheetVisible = sheetMode !== "hidden";
 
   return (
     <div className="relative w-full h-[calc(100dvh-72px)]">
       <div ref={mapContainerRef} className="w-full h-full z-0" />
 
+      {/* Search bar */}
+      <SearchBar
+        vehicles={vehicles}
+        onFocus={() => setSheetMode("hidden")}
+        onBlur={() => { if (sheetMode === "hidden") setSheetMode("nearby"); }}
+        onSelect={handleSearchSelect}
+      />
+
       {/* Layers toggle */}
       <button
         onClick={() => setShowLayers(!showLayers)}
         className={cn(
-          "absolute top-4 left-4 z-[1000] flex items-center gap-2 px-3 py-2 rounded-md text-sm font-semibold transition-all",
+          "absolute top-[68px] right-4 z-[1000] flex items-center gap-2 px-3 py-2 rounded-md text-sm font-semibold transition-all",
           "bg-card border border-border",
           showLayers ? "text-primary" : "text-muted-foreground"
         )}
       >
         <Layers className="w-4 h-4" />
-        <span>Layers</span>
       </button>
 
-      {/* Selected place card */}
-      {selectedPlace && (
-        <div className="absolute top-4 right-4 left-24 z-[1000] bg-card border border-border rounded-lg p-3 shadow-lg max-w-[280px] ml-auto">
-          <div className="flex items-start gap-2">
-            <div className="flex-1 min-w-0">
-              <div className="text-sm font-bold text-foreground truncate">
-                {selectedPlace.shortName}
-              </div>
-              <div className="text-[10px] text-muted-foreground leading-tight mt-0.5 line-clamp-2">
-                {selectedPlace.loading ? "Looking up address…" : selectedPlace.displayName}
-              </div>
-              {selectedPlace.distance && (
-                <div className="flex items-center gap-2 mt-2">
-                  <span className="text-xs font-mono font-bold text-primary">{selectedPlace.distance}</span>
-                  <span className="text-[10px] text-muted-foreground">·</span>
-                  <span className="text-xs font-mono text-muted-foreground">{selectedPlace.duration}</span>
-                </div>
-              )}
-            </div>
-            <button onClick={clearRoute} className="p-1 rounded hover:bg-accent transition-colors shrink-0">
-              <X className="w-3.5 h-3.5 text-muted-foreground" />
-            </button>
-          </div>
-          {!selectedPlace.loading && !selectedPlace.distance && (
-            <button
-              onClick={handleGetDirections}
-              disabled={routeLoading}
-              className="mt-2.5 w-full flex items-center justify-center gap-1.5 py-2 rounded-md bg-primary text-primary-foreground text-xs font-bold hover:opacity-[0.88] transition-opacity disabled:opacity-50"
-            >
-              <Navigation className="w-3.5 h-3.5" />
-              {routeLoading ? "Getting route…" : "Get Directions"}
-            </button>
-          )}
-        </div>
+      {/* Back to nearby button when in a detail mode */}
+      {sheetMode !== "nearby" && sheetMode !== "hidden" && (
+        <button
+          onClick={resetSheet}
+          className="absolute top-[68px] left-4 z-[1000] flex items-center gap-1.5 px-3 py-2 rounded-md text-xs font-semibold bg-card border border-border text-muted-foreground hover:text-foreground transition-colors"
+        >
+          <X className="w-3.5 h-3.5" />
+          <span>Back</span>
+        </button>
       )}
 
       {/* Bottom sheet */}
       <div
         className={cn(
-          "absolute bottom-0 left-0 right-0 z-[1000] bg-surface-1 rounded-t-xl border-t border-border transition-all duration-300 ease-out",
-          sheetExpanded ? "h-[70%]" : "h-[30%]"
+          "absolute left-0 right-0 z-[1000] bg-surface-1 rounded-t-xl border-t border-border transition-all duration-300 ease-out",
+          isSheetVisible
+            ? sheetExpanded ? "bottom-0 h-[70%]" : "bottom-0 h-[30%]"
+            : "bottom-0 h-0 overflow-hidden"
         )}
       >
-        <button
-          className="w-full flex justify-center py-2 cursor-grab active:cursor-grabbing"
-          onClick={() => setSheetExpanded(!sheetExpanded)}
-        >
-          <div className="w-8 h-1 rounded-full bg-[rgba(255,255,255,0.20)]" />
-        </button>
+        {isSheetVisible && (
+          <>
+            <button
+              className="w-full flex justify-center py-2 cursor-grab active:cursor-grabbing"
+              onClick={() => setSheetExpanded(!sheetExpanded)}
+            >
+              <div className="w-8 h-1 rounded-full bg-[rgba(255,255,255,0.20)]" />
+            </button>
 
-        <div className="px-4 pb-4 overflow-y-auto scrollbar-hide h-[calc(100%-24px)]">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-sm font-bold text-foreground">Nearby Stops</h2>
-            <LivePill />
-          </div>
+            <div className="px-4 pb-4 overflow-y-auto scrollbar-hide h-[calc(100%-24px)]">
+              {/* Nearby (default) */}
+              {sheetMode === "nearby" && (
+                <>
+                  <div className="flex items-center justify-between mb-3">
+                    <h2 className="text-sm font-bold text-foreground">Nearby Stops</h2>
+                    <LivePill />
+                  </div>
+                  <div className="flex flex-col">
+                    {MOCK_DEPARTURES.map((d) => (
+                      <DepartureRow key={d.id} departure={d} />
+                    ))}
+                  </div>
+                </>
+              )}
 
-          <div className="flex flex-col">
-            {MOCK_DEPARTURES.map((d) => (
-              <DepartureRow key={d.id} departure={d} />
-            ))}
-          </div>
-        </div>
+              {/* Place detail */}
+              {sheetMode === "place" && selectedPlace && (
+                <SheetPlaceDetail
+                  place={selectedPlace}
+                  distance={placeDistance}
+                  duration={placeDuration}
+                  loading={placeRouteLoading}
+                  onGetDirections={handleGetDirections}
+                  onClose={resetSheet}
+                />
+              )}
+
+              {/* Route detail */}
+              {sheetMode === "route" && selectedRoute && (
+                <SheetRouteDetail
+                  route={selectedRoute}
+                  vehicles={vehicles}
+                  geometry={routeGeometry}
+                  loading={routeLoading}
+                />
+              )}
+
+              {/* Station detail */}
+              {sheetMode === "station" && selectedStation && (
+                <SheetStationDetail station={selectedStation} />
+              )}
+
+              {/* Vehicle detail */}
+              {sheetMode === "vehicle" && selectedVehicle && (
+                <SheetVehicleDetail
+                  vehicle={selectedVehicle}
+                  onTrack={handleTrackVehicle}
+                />
+              )}
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
