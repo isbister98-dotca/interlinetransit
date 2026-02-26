@@ -1,6 +1,7 @@
-import { Train, Leaf, Flame, MapPin, Bell, Settings, ChevronRight } from "lucide-react";
+import { Train, Leaf, Flame, MapPin, Bell, Settings, ChevronRight, ArrowLeft, BookOpen } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { RouteChip } from "@/components/transit/RouteChip";
+import { useNavigate } from "react-router-dom";
 
 const STATS = [
   { label: "Total Trips", value: "72", icon: Train },
@@ -22,10 +23,18 @@ const SETTINGS_ITEMS = [
 ];
 
 export default function ProfileScreen() {
+  const navigate = useNavigate();
+
   return (
     <div className="max-w-[480px] mx-auto px-4 pt-6 pb-24 animate-fade-up">
-      {/* User info */}
-      <div className="flex items-center gap-4 mb-6">
+      {/* Back button + User info */}
+      <div className="flex items-center gap-3 mb-6">
+        <button
+          onClick={() => navigate("/social")}
+          className="w-8 h-8 rounded-lg bg-card border border-border flex items-center justify-center"
+        >
+          <ArrowLeft className="w-4 h-4 text-foreground" />
+        </button>
         <div className="w-14 h-14 rounded-full bg-[hsl(93_50%_56%/0.12)] border-2 border-[hsl(93_50%_56%/0.28)] flex items-center justify-center text-lg font-bold text-primary">
           YU
         </div>
@@ -56,6 +65,19 @@ export default function ProfileScreen() {
           <RouteChip key={r.routeId} routeId={r.routeId} routeLabel={r.routeLabel} agency={r.agency} size="sm" />
         ))}
       </div>
+
+      {/* Attributions */}
+      <h2 className="text-sm font-bold text-foreground mb-3">About</h2>
+      <button
+        onClick={() => navigate("/attributions")}
+        className="w-full flex items-center gap-2.5 px-0 py-[9px] border-b border-border hover:bg-card/50 transition-colors mb-6"
+      >
+        <div className="w-[30px] h-[30px] rounded-sm bg-card flex items-center justify-center flex-shrink-0">
+          <BookOpen className="w-4 h-4 text-muted-foreground" />
+        </div>
+        <span className="flex-1 text-[11px] font-semibold text-foreground text-left">Attributions</span>
+        <ChevronRight className="w-4 h-4 text-muted-foreground" />
+      </button>
 
       {/* Settings */}
       <div className="flex flex-col mb-8">
