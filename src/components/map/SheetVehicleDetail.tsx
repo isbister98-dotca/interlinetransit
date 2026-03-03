@@ -37,10 +37,10 @@ export function SheetVehicleDetail({ vehicle, onTrack, routeGeometry, routeLoadi
   const isOnTime = (vehicle.speed || 0) > 10;
   const agencyColor = AGENCY_COLORS[vehicle.agency];
   const speedDisplay = vehicle.speed != null ? `${vehicle.speed} km/h` : "N/A";
-  const destination = stops.length > 0 ? stops[stops.length - 1].name : bearingToDirection(vehicle.bearing);
 
   const stops = routeGeometry?.stops ?? [];
   const vehicleStopIdx = findNearestStopIndex(vehicle, stops);
+  const destination = stops.length > 0 ? stops[stops.length - 1].name : bearingToDirection(vehicle.bearing);
 
   return (
     <div className="animate-slide-up">
