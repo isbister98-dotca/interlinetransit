@@ -6,13 +6,11 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-/** Get active service_ids for the next 7 days by checking calendar + calendar_dates */
 async function getActiveServiceIds(supabase: any, agencyId: string): Promise<Set<string>> {
   const now = new Date();
   const serviceIds = new Set<string>();
   const dayNames = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
 
-  // Get next 7 days as YYYYMMDD strings and day-of-week indices
   const days: { dateStr: string; dayIdx: number }[] = [];
   for (let i = 0; i < 7; i++) {
     const d = new Date(now);
@@ -24,7 +22,6 @@ async function getActiveServiceIds(supabase: any, agencyId: string): Promise<Set
   const startDate = days[0].dateStr;
   const endDate = days[6].dateStr;
 
-  // Fetch calendar entries that overlap with our 7-day window
   const { data: calendars } = await supabase
     .from("gtfs_calendar")
     .select("*")
@@ -35,15 +32,11 @@ async function getActiveServiceIds(supabase: any, agencyId: string): Promise<Set
   for (const cal of calendars || []) {
     for (const day of days) {
       if (cal.start_date <= day.dateStr && cal.end_date >= day.dateStr) {
-        const dayName = dayNames[day.dayIdx];
-        if (cal[dayName]) {
-          serviceIds.add(cal.service_id);
-        }
+        if (cal[dayNames[day.dayIdx]]) serviceIds.add(cal.service_id);
       }
     }
   }
 
-  // Check calendar_dates for additions (exception_type=1) and removals (exception_type=2)
   const dateStrings = days.map(d => d.dateStr);
   const { data: exceptions } = await supabase
     .from("gtfs_calendar_dates")
@@ -52,24 +45,16 @@ async function getActiveServiceIds(supabase: any, agencyId: string): Promise<Set
     .in("date", dateStrings);
 
   for (const ex of exceptions || []) {
-    if (ex.exception_type === 1) {
-      serviceIds.add(ex.service_id);
-    }
-    // Note: exception_type=2 removes service, but since we're building an inclusive set
-    // and the calendar already only adds matching days, this is fine for filtering.
-    // For strict correctness we'd need per-day tracking, but for stop_times filtering
-    // it's better to include slightly more than miss trips.
+    if (ex.exception_type === 1) serviceIds.add(ex.service_id);
   }
 
   return serviceIds;
 }
 
-/** Get trip_ids matching active service_ids */
 async function getActiveTripIds(supabase: any, agencyId: string, serviceIds: Set<string>): Promise<Set<string>> {
   const tripIds = new Set<string>();
   const serviceArr = Array.from(serviceIds);
 
-  // Fetch in batches of 100 service_ids to avoid query limits
   for (let i = 0; i < serviceArr.length; i += 100) {
     const batch = serviceArr.slice(i, i + 100);
     let offset = 0;
@@ -133,53 +118,67 @@ Deno.serve(async (req) => {
         // Step 2: Get trip_ids matching those services
         const activeTripIds = await getActiveTripIds(supabase, agencyId, serviceIds);
 
-        // Step 3: Download and extract stop_times.txt
+        // Step 3: Download zip, only extract stop_times.txt
         const res = await fetch(feed.feed_url);
         if (!res.ok) throw new Error(`Download failed: ${res.status}`);
-        const buf = new Uint8Array(await res.arrayBuffer());
-        const zipFiles = unzipSync(buf);
+        let buf: Uint8Array | null = new Uint8Array(await res.arrayBuffer());
+
+        const zipFiles = unzipSync(buf, {
+          filter: (file) => file.name.endsWith("stop_times.txt"),
+        });
+        // Free zip buffer immediately
+        buf = null;
+
         const key = Object.keys(zipFiles).find(k => k.endsWith("stop_times.txt"));
         if (!key) throw new Error("stop_times.txt not found in zip");
 
-        const text = new TextDecoder().decode(zipFiles[key]);
-        const allLines = text.replace(/\r/g, "").split("\n").filter(l => l.trim());
-        if (allLines.length < 2) throw new Error("stop_times.txt is empty");
-
-        const headers = allLines[0].split(",").map(h => h.trim().replace(/^\uFEFF/, ""));
-        const idxTripId = headers.indexOf("trip_id");
-        const idxArrival = headers.indexOf("arrival_time");
-        const idxDeparture = headers.indexOf("departure_time");
-        const idxStopId = headers.indexOf("stop_id");
-        const idxSeq = headers.indexOf("stop_sequence");
-        const idxPickup = headers.indexOf("pickup_type");
-        const idxDropoff = headers.indexOf("drop_off_type");
-        const idxTimepoint = headers.indexOf("timepoint");
-
-        // Step 4: Delete existing stop_times
-        // Delete in batches to avoid timeout on large deletes
-        let deleteMore = true;
-        while (deleteMore) {
-          const { data: batch } = await supabase
-            .from("gtfs_stop_times")
-            .select("trip_id, stop_sequence")
-            .eq("agency_id", agencyId)
-            .limit(5000);
-          if (!batch || batch.length === 0) {
-            deleteMore = false;
-          } else {
-            await supabase.from("gtfs_stop_times").delete().eq("agency_id", agencyId).limit(5000);
-            if (batch.length < 5000) deleteMore = false;
-          }
+        const fileBytes = zipFiles[key];
+        // Free other entries
+        for (const k of Object.keys(zipFiles)) {
+          if (k !== key) delete zipFiles[k];
         }
 
-        // Step 5: Parse and insert filtered rows in batches
+        // Step 4: Delete existing stop_times
+        await supabase.from("gtfs_stop_times").delete().eq("agency_id", agencyId);
+
+        // Step 5: Stream-parse the bytes line by line, filter by active trips, batch insert
+        const decoder = new TextDecoder();
+        let lineStart = 0;
+        let isFirst = true;
+        let idxTripId = -1, idxArrival = -1, idxDeparture = -1;
+        let idxStopId = -1, idxSeq = -1, idxPickup = -1, idxDropoff = -1, idxTimepoint = -1;
         let totalRows = 0;
         let batch: any[] = [];
 
-        for (let i = 1; i < allLines.length; i++) {
-          const vals = allLines[i].split(",");
+        async function flushBatch() {
+          if (batch.length === 0) return;
+          const { error } = await supabase.from("gtfs_stop_times").insert(batch);
+          if (error) throw error;
+          totalRows += batch.length;
+          batch = [];
+        }
+
+        function processLine(line: string) {
+          line = line.replace(/\r/g, "").trim();
+          if (!line) return;
+
+          if (isFirst) {
+            const headers = line.replace(/^\uFEFF/, "").split(",").map(h => h.trim());
+            idxTripId = headers.indexOf("trip_id");
+            idxArrival = headers.indexOf("arrival_time");
+            idxDeparture = headers.indexOf("departure_time");
+            idxStopId = headers.indexOf("stop_id");
+            idxSeq = headers.indexOf("stop_sequence");
+            idxPickup = headers.indexOf("pickup_type");
+            idxDropoff = headers.indexOf("drop_off_type");
+            idxTimepoint = headers.indexOf("timepoint");
+            isFirst = false;
+            return;
+          }
+
+          const vals = line.split(",");
           const tripId = vals[idxTripId]?.trim();
-          if (!tripId || !activeTripIds.has(tripId)) continue;
+          if (!tripId || !activeTripIds.has(tripId)) return;
 
           batch.push({
             agency_id: agencyId,
@@ -192,19 +191,33 @@ Deno.serve(async (req) => {
             drop_off_type: idxDropoff >= 0 && vals[idxDropoff]?.trim() ? parseInt(vals[idxDropoff].trim()) : null,
             timepoint: idxTimepoint >= 0 && vals[idxTimepoint]?.trim() ? parseInt(vals[idxTimepoint].trim()) : null,
           });
+        }
 
-          if (batch.length >= 500) {
-            const { error } = await supabase.from("gtfs_stop_times").insert(batch);
-            if (error) throw error;
-            totalRows += batch.length;
-            batch = [];
+        // Process bytes in 1MB chunks to avoid creating one massive string
+        const CHUNK_SIZE = 1024 * 1024; // 1MB
+        let leftover = "";
+
+        for (let offset = 0; offset < fileBytes.length; offset += CHUNK_SIZE) {
+          const end = Math.min(offset + CHUNK_SIZE, fileBytes.length);
+          const chunkText = leftover + decoder.decode(fileBytes.subarray(offset, end), { stream: end < fileBytes.length });
+          const lines = chunkText.split("\n");
+
+          // Last element may be incomplete — save as leftover
+          leftover = lines.pop() || "";
+
+          for (const line of lines) {
+            processLine(line);
+            if (batch.length >= 500) {
+              await flushBatch();
+            }
           }
         }
-        if (batch.length > 0) {
-          const { error } = await supabase.from("gtfs_stop_times").insert(batch);
-          if (error) throw error;
-          totalRows += batch.length;
+
+        // Process leftover
+        if (leftover.trim()) {
+          processLine(leftover);
         }
+        await flushBatch();
 
         await supabase.from("gtfs_sync_status").upsert({
           agency_id: agencyId, file_type: "stop_times", status: "done",

@@ -6,18 +6,47 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-function parseCSVLines(text: string): { headers: string[]; lines: string[] } {
-  const allLines = text.replace(/\r/g, "").split("\n").filter(l => l.trim());
-  if (allLines.length < 2) return { headers: [], lines: [] };
-  const headers = allLines[0].split(",").map(h => h.trim().replace(/^\uFEFF/, ""));
-  return { headers, lines: allLines.slice(1) };
-}
+/** Process a Uint8Array line-by-line without creating the full string.
+ *  Calls `onLine` for each line (decoded on the fly). */
+function processLines(
+  bytes: Uint8Array,
+  onHeader: (headers: string[]) => void,
+  onLine: (vals: string[]) => void,
+) {
+  const decoder = new TextDecoder();
+  let lineStart = 0;
+  let isFirst = true;
 
-async function batchInsert(supabase: any, table: string, rows: any[], batchSize = 500) {
-  for (let i = 0; i < rows.length; i += batchSize) {
-    const batch = rows.slice(i, i + batchSize);
-    const { error } = await supabase.from(table).insert(batch);
-    if (error) throw error;
+  for (let i = 0; i < bytes.length; i++) {
+    // Look for \n (0x0A)
+    if (bytes[i] === 0x0a) {
+      const lineBytes = bytes.subarray(lineStart, i);
+      lineStart = i + 1;
+      // Decode just this line
+      let line = decoder.decode(lineBytes, { stream: true });
+      line = line.replace(/\r/g, "").trim();
+      if (!line) continue;
+
+      if (isFirst) {
+        const headers = line.replace(/^\uFEFF/, "").split(",").map(h => h.trim());
+        onHeader(headers);
+        isFirst = false;
+      } else {
+        onLine(line.split(","));
+      }
+    }
+  }
+
+  // Handle last line without trailing newline
+  if (lineStart < bytes.length) {
+    let line = decoder.decode(bytes.subarray(lineStart)).replace(/\r/g, "").trim();
+    if (line) {
+      if (isFirst) {
+        onHeader(line.replace(/^\uFEFF/, "").split(",").map(h => h.trim()));
+      } else {
+        onLine(line.split(","));
+      }
+    }
   }
 }
 
@@ -50,46 +79,56 @@ Deno.serve(async (req) => {
       try {
         const res = await fetch(feed.feed_url);
         if (!res.ok) throw new Error(`Download failed: ${res.status}`);
-        const buf = new Uint8Array(await res.arrayBuffer());
-        const zipFiles = unzipSync(buf);
+        let buf: Uint8Array | null = new Uint8Array(await res.arrayBuffer());
+
+        // Only extract shapes.txt using filter
+        const zipFiles = unzipSync(buf, {
+          filter: (file) => file.name.endsWith("shapes.txt"),
+        });
+        // Free zip buffer immediately
+        buf = null;
+
         const key = Object.keys(zipFiles).find(k => k.endsWith("shapes.txt"));
         if (!key) throw new Error("shapes.txt not found in zip");
 
-        const text = new TextDecoder().decode(zipFiles[key]);
-        const { headers, lines } = parseCSVLines(text);
-        const idxShapeId = headers.indexOf("shape_id");
-        const idxLat = headers.indexOf("shape_pt_lat");
-        const idxLon = headers.indexOf("shape_pt_lon");
-        const idxSeq = headers.indexOf("shape_pt_sequence");
+        const fileBytes = zipFiles[key];
+        // Free the zip object reference to other files
+        for (const k of Object.keys(zipFiles)) {
+          if (k !== key) delete zipFiles[k];
+        }
 
         // Delete old data
         await supabase.from("gtfs_shapes").delete().eq("agency_id", agencyId);
 
-        // Process and insert in batches
         let totalRows = 0;
         let batch: any[] = [];
+        let idxShapeId = -1, idxLat = -1, idxLon = -1, idxSeq = -1;
 
-        for (const line of lines) {
-          const vals = line.split(",");
-          batch.push({
-            agency_id: agencyId,
-            shape_id: vals[idxShapeId]?.trim() || "",
-            shape_pt_lat: parseFloat(vals[idxLat]?.trim() || "0"),
-            shape_pt_lon: parseFloat(vals[idxLon]?.trim() || "0"),
-            shape_pt_sequence: parseInt(vals[idxSeq]?.trim() || "0"),
-          });
+        processLines(
+          fileBytes,
+          (headers) => {
+            idxShapeId = headers.indexOf("shape_id");
+            idxLat = headers.indexOf("shape_pt_lat");
+            idxLon = headers.indexOf("shape_pt_lon");
+            idxSeq = headers.indexOf("shape_pt_sequence");
+          },
+          (vals) => {
+            batch.push({
+              agency_id: agencyId,
+              shape_id: vals[idxShapeId]?.trim() || "",
+              shape_pt_lat: parseFloat(vals[idxLat]?.trim() || "0"),
+              shape_pt_lon: parseFloat(vals[idxLon]?.trim() || "0"),
+              shape_pt_sequence: parseInt(vals[idxSeq]?.trim() || "0"),
+            });
+          },
+        );
 
-          if (batch.length >= 500) {
-            const { error } = await supabase.from("gtfs_shapes").insert(batch);
-            if (error) throw error;
-            totalRows += batch.length;
-            batch = [];
-          }
-        }
-        if (batch.length > 0) {
-          const { error } = await supabase.from("gtfs_shapes").insert(batch);
+        // Insert all rows in batches
+        for (let i = 0; i < batch.length; i += 500) {
+          const chunk = batch.slice(i, i + 500);
+          const { error } = await supabase.from("gtfs_shapes").insert(chunk);
           if (error) throw error;
-          totalRows += batch.length;
+          totalRows += chunk.length;
         }
 
         await supabase.from("gtfs_sync_status").upsert({
