@@ -9,6 +9,7 @@ import JourneyScreen from "@/pages/JourneyScreen";
 import SocialScreen from "@/pages/SocialScreen";
 import ProfileScreen from "@/pages/ProfileScreen";
 import AttributionsScreen from "@/pages/AttributionsScreen";
+import AdminGtfsScreen from "@/pages/AdminGtfsScreen";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
