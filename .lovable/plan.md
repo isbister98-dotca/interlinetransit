@@ -1,53 +1,31 @@
 
-# Vehicle Display & Detail Improvements
 
-## 1. Zoom-Based Vehicle Filtering (Priority Clustering)
+# Fix: Search Results Showing Wrong Names for Buildings/Landmarks
 
-**Problem**: At low zoom levels, 500+ vehicle markers clutter the map and hurt performance.
+## Problem
+When searching for landmarks like "CN Tower" or "Rogers Centre", the Nominatim API returns correct results, but the name displayed in the dropdown is wrong. For example, CN Tower shows as "Bremner Boulevard" because the code extracts the name in this order:
 
-**Solution**: In `syncMarkers()` within `MapScreen.tsx`, check the current map zoom level and filter vehicles by type priority:
+```
+d.address?.amenity || d.address?.building || d.address?.road || d.name
+```
 
-- **Zoom <= 10**: Show only trains (GO, UP) and subway
-- **Zoom 11-12**: Add streetcars/trams
-- **Zoom >= 13**: Show all vehicles including buses
+Since CN Tower's address has `road: "Bremner Boulevard"` but no `amenity` or `building` field (it uses `man_made`), the road name takes priority over the actual place name (`d.name = "CN Tower"`).
 
-Listen to the map's `zoomend` event to re-run `syncMarkers()` when zoom changes.
+## Fix
 
-**File**: `src/pages/MapScreen.tsx`
-- Add a `zoomRef` that updates on `zoomend`
-- Update `syncMarkers` to filter by `vehicle.vehicleType` based on current zoom
-- Add `zoomend` listener in map init effect
+**File: `src/lib/osm-api.ts`** (line 49)
 
-## 2. Fix Speed Display
+Change the name extraction order to prioritize `d.name` first, then fall back to address components:
 
-**Problem**: Speed shows `0 km/h` when the GTFS-RT feed returns `null`/`undefined` speed (vehicle is moving but speed data isn't reported).
+```
+name: d.name || d.address?.amenity || d.address?.building || d.address?.road || d.display_name?.split(",")[0] || "Unknown"
+```
 
-**Solution**: In `SheetVehicleDetail.tsx`, when `vehicle.speed` is `undefined` or `null`, display "N/A" instead of "0 km/h". Only show "0 km/h" when speed is explicitly `0`.
+This single-line change ensures that landmarks, stadiums, towers, and other named places use their proper name rather than a nearby street name.
 
-**File**: `src/components/map/SheetVehicleDetail.tsx`
-- Change speed display: `vehicle.speed != null ? `${vehicle.speed} km/h` : "N/A"`
+## Technical Detail
 
-## 3. Replace Direction with Destination/End Station
+- The Nominatim API returns a top-level `name` field for named features (e.g., `"CN Tower"`, `"Rogers Centre"`)
+- Address sub-fields like `amenity`, `building`, `road` are more granular but not always appropriate as the display name
+- Putting `d.name` first ensures we always use the canonical name when available
 
-**Problem**: Direction shows compass bearings (N, NE, etc.) which aren't useful to riders.
-
-**Solution**: Use the route geometry stops data. When `routeGeometry` is available, show the last stop name as the destination. Fall back to compass direction when route data isn't loaded yet.
-
-**File**: `src/components/map/SheetVehicleDetail.tsx`
-- Replace the compass direction display with the last stop name from `routeGeometry.stops`
-- Change label from "Direction" to "Destination"
-- Fall back to bearing direction if no stops data
-
-## 4. Show Stops on Swipe-Up (Already Partially Done)
-
-The current implementation already shows stops when `expanded` is true. The plan ensures:
-- The stops timeline only renders when `expanded === true` (already the case)
-- The swipe-up grab handle toggles `sheetExpanded` (already wired)
-- No changes needed here -- this already works as described
-
-## Technical Changes Summary
-
-| File | Change |
-|------|--------|
-| `src/pages/MapScreen.tsx` | Add zoom-based filtering in `syncMarkers`, add `zoomend` listener |
-| `src/components/map/SheetVehicleDetail.tsx` | Fix speed display, replace compass direction with destination stop name |

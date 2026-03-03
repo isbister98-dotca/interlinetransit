@@ -1,4 +1,4 @@
-import { Compass, Gauge, MapPin, Crosshair } from "lucide-react";
+import { Gauge, MapPin, Crosshair, Flag } from "lucide-react";
 import { RouteChip } from "@/components/transit/RouteChip";
 import { OccupancyBar } from "@/components/transit/OccupancyBar";
 import { StatusPill } from "@/components/transit/StatusPill";
@@ -36,9 +36,11 @@ function findNearestStopIndex(vehicle: Vehicle, stops: { lat: number; lng: numbe
 export function SheetVehicleDetail({ vehicle, onTrack, routeGeometry, routeLoading, expanded }: SheetVehicleDetailProps) {
   const isOnTime = (vehicle.speed || 0) > 10;
   const agencyColor = AGENCY_COLORS[vehicle.agency];
+  const speedDisplay = vehicle.speed != null ? `${vehicle.speed} km/h` : "N/A";
 
   const stops = routeGeometry?.stops ?? [];
   const vehicleStopIdx = findNearestStopIndex(vehicle, stops);
+  const destination = stops.length > 0 ? stops[stops.length - 1].name : bearingToDirection(vehicle.bearing);
 
   return (
     <div className="animate-slide-up">
@@ -56,13 +58,13 @@ export function SheetVehicleDetail({ vehicle, onTrack, routeGeometry, routeLoadi
       <div className="grid grid-cols-3 gap-2 mb-3">
         <div className="flex flex-col items-center gap-1 px-2 py-2 rounded-md bg-accent/50">
           <Gauge className="w-3.5 h-3.5 text-muted-foreground" />
-          <span className="text-xs font-mono font-bold text-foreground">{vehicle.speed ?? 0} km/h</span>
+          <span className="text-xs font-mono font-bold text-foreground">{speedDisplay}</span>
           <span className="text-[9px] text-muted-foreground">Speed</span>
         </div>
         <div className="flex flex-col items-center gap-1 px-2 py-2 rounded-md bg-accent/50">
-          <Compass className="w-3.5 h-3.5 text-muted-foreground" />
-          <span className="text-xs font-mono font-bold text-foreground">{bearingToDirection(vehicle.bearing)}</span>
-          <span className="text-[9px] text-muted-foreground">Direction</span>
+          <Flag className="w-3.5 h-3.5 text-muted-foreground" />
+          <span className="text-xs font-mono font-bold text-foreground truncate max-w-[80px] text-center">{destination}</span>
+          <span className="text-[9px] text-muted-foreground">Destination</span>
         </div>
         <div className="flex flex-col items-center gap-1 px-2 py-2 rounded-md bg-accent/50">
           <MapPin className="w-3.5 h-3.5 text-muted-foreground" />

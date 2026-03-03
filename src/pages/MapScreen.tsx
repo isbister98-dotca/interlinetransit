@@ -328,16 +328,26 @@ export default function MapScreen() {
 
   const syncMarkers = useCallback(() => {
     const layer = vehicleLayerRef.current;
-    if (!layer) return;
+    const map = mapRef.current;
+    if (!layer || !map) return;
     layer.clearLayers();
 
     if (!showLayersRef.current) return;
 
     const activeRoute = selectedRouteRef.current;
+    const zoom = map.getZoom();
 
     vehiclesRef.current.forEach((v) => {
       // If a route is selected, only show vehicles matching both routeId AND agency
       if (activeRoute && (v.routeId !== activeRoute.routeId || v.agency !== activeRoute.agency)) return;
+
+      // Zoom-based priority filtering (skip when a specific route is selected)
+      if (!activeRoute) {
+        const isTrain = v.vehicleType === "train" || v.vehicleType === "subway";
+        const isTram = v.vehicleType === "tram";
+        if (zoom <= 10 && !isTrain) return;
+        if (zoom > 10 && zoom <= 12 && !isTrain && !isTram) return;
+      }
 
       const marker = L.marker([v.lat, v.lng], { icon: createVehicleIcon(v) });
       marker.on("click", () => handleVehicleClick(v));
@@ -370,6 +380,7 @@ export default function MapScreen() {
     overlayLayerRef.current = overlayLayer;
 
     map.on("click", (e: L.LeafletMouseEvent) => handleMapClick(e));
+    map.on("zoomend", () => syncMarkers());
 
     // Fix tile loading by ensuring map knows its container size
     requestAnimationFrame(() => map.invalidateSize());
