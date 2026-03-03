@@ -6,20 +6,7 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-function parseCSVLines(text: string): { headers: string[]; lines: string[] } {
-  const allLines = text.replace(/\r/g, "").split("\n").filter(l => l.trim());
-  if (allLines.length < 2) return { headers: [], lines: [] };
-  const headers = allLines[0].split(",").map(h => h.trim().replace(/^\uFEFF/, ""));
-  return { headers, lines: allLines.slice(1) };
-}
-
-async function batchInsert(supabase: any, table: string, rows: any[], batchSize = 500) {
-  for (let i = 0; i < rows.length; i += batchSize) {
-    const batch = rows.slice(i, i + batchSize);
-    const { error } = await supabase.from(table).insert(batch);
-    if (error) throw error;
-  }
-}
+const PAGE_SIZE = 50000; // rows per invocation
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
@@ -27,6 +14,7 @@ Deno.serve(async (req) => {
   try {
     const url = new URL(req.url);
     const agencyFilter = url.searchParams.get("agency_id");
+    const page = parseInt(url.searchParams.get("page") || "0");
 
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL")!,
@@ -42,34 +30,82 @@ Deno.serve(async (req) => {
 
     for (const feed of feeds || []) {
       const agencyId = feed.agency_id;
-      await supabase.from("gtfs_sync_status").upsert({
-        agency_id: agencyId, file_type: "shapes", status: "running",
-        started_at: new Date().toISOString(), row_count: 0, error_msg: null, completed_at: null,
-      }, { onConflict: "agency_id,file_type" });
+
+      if (page === 0) {
+        await supabase.from("gtfs_sync_status").upsert({
+          agency_id: agencyId, file_type: "shapes", status: "running",
+          started_at: new Date().toISOString(), row_count: 0, error_msg: null, completed_at: null,
+        }, { onConflict: "agency_id,file_type" });
+      }
 
       try {
+        // Download zip and extract only shapes.txt
         const res = await fetch(feed.feed_url);
         if (!res.ok) throw new Error(`Download failed: ${res.status}`);
-        const buf = new Uint8Array(await res.arrayBuffer());
-        const zipFiles = unzipSync(buf);
+        let buf: Uint8Array | null = new Uint8Array(await res.arrayBuffer());
+        const zipFiles = unzipSync(buf, {
+          filter: (file) => file.name.endsWith("shapes.txt"),
+        });
+        buf = null;
+
         const key = Object.keys(zipFiles).find(k => k.endsWith("shapes.txt"));
         if (!key) throw new Error("shapes.txt not found in zip");
 
+        // Decode once — this is native C++ in V8, very fast
         const text = new TextDecoder().decode(zipFiles[key]);
-        const { headers, lines } = parseCSVLines(text);
+        // Free decompressed bytes
+        delete zipFiles[key];
+
+        // Find header line end
+        const firstNewline = text.indexOf("\n");
+        if (firstNewline < 0) throw new Error("shapes.txt is empty");
+
+        const headerLine = text.substring(0, firstNewline).replace(/\r/g, "").replace(/^\uFEFF/, "");
+        const headers = headerLine.split(",").map(h => h.trim());
         const idxShapeId = headers.indexOf("shape_id");
         const idxLat = headers.indexOf("shape_pt_lat");
         const idxLon = headers.indexOf("shape_pt_lon");
         const idxSeq = headers.indexOf("shape_pt_sequence");
 
-        // Delete old data
-        await supabase.from("gtfs_shapes").delete().eq("agency_id", agencyId);
+        // Count lines and find the range for this page
+        const startLine = page * PAGE_SIZE;
+        let lineNum = 0;
+        let pos = firstNewline + 1;
+        let pageStartPos = -1;
+        let processedInPage = 0;
 
-        // Process and insert in batches
-        let totalRows = 0;
+        // Skip to start line
+        if (startLine === 0) {
+          pageStartPos = pos;
+        } else {
+          while (pos < text.length && lineNum < startLine) {
+            const nl = text.indexOf("\n", pos);
+            if (nl < 0) break;
+            pos = nl + 1;
+            lineNum++;
+          }
+          pageStartPos = pos;
+        }
+
+        // On page 0, delete existing data
+        if (page === 0) {
+          await supabase.from("gtfs_shapes").delete().eq("agency_id", agencyId);
+        }
+
+        // Process PAGE_SIZE lines from pageStartPos
         let batch: any[] = [];
+        let totalRows = 0;
+        pos = pageStartPos;
 
-        for (const line of lines) {
+        while (pos < text.length && processedInPage < PAGE_SIZE) {
+          const nl = text.indexOf("\n", pos);
+          const lineEnd = nl < 0 ? text.length : nl;
+          const line = text.substring(pos, lineEnd).replace(/\r/g, "").trim();
+          pos = nl < 0 ? text.length : nl + 1;
+
+          if (!line) continue;
+          processedInPage++;
+
           const vals = line.split(",");
           batch.push({
             agency_id: agencyId,
@@ -79,24 +115,34 @@ Deno.serve(async (req) => {
             shape_pt_sequence: parseInt(vals[idxSeq]?.trim() || "0"),
           });
 
-          if (batch.length >= 500) {
+          if (batch.length >= 2000) {
             const { error } = await supabase.from("gtfs_shapes").insert(batch);
             if (error) throw error;
             totalRows += batch.length;
             batch = [];
           }
         }
+
         if (batch.length > 0) {
           const { error } = await supabase.from("gtfs_shapes").insert(batch);
           if (error) throw error;
           totalRows += batch.length;
         }
 
-        await supabase.from("gtfs_sync_status").upsert({
-          agency_id: agencyId, file_type: "shapes", status: "done",
-          row_count: totalRows, completed_at: new Date().toISOString(), error_msg: null,
-        }, { onConflict: "agency_id,file_type" });
-        results[agencyId] = { ok: true, rows: totalRows };
+        // Check if there are more lines
+        const hasMore = pos < text.length && text.substring(pos).trim().length > 0;
+
+        // Update sync status
+        if (!hasMore) {
+          // Get total row count from DB
+          const { count } = await supabase.from("gtfs_shapes").select("*", { count: "exact", head: true }).eq("agency_id", agencyId);
+          await supabase.from("gtfs_sync_status").upsert({
+            agency_id: agencyId, file_type: "shapes", status: "done",
+            row_count: count || totalRows, completed_at: new Date().toISOString(), error_msg: null,
+          }, { onConflict: "agency_id,file_type" });
+        }
+
+        results[agencyId] = { ok: true, rows: totalRows, page, hasMore };
       } catch (e) {
         await supabase.from("gtfs_sync_status").upsert({
           agency_id: agencyId, file_type: "shapes", status: "error",
