@@ -14,6 +14,450 @@ export type Database = {
   }
   public: {
     Tables: {
+      gtfs_agency: {
+        Row: {
+          agency_email: string | null
+          agency_fare_url: string | null
+          agency_id: string
+          agency_lang: string | null
+          agency_name: string | null
+          agency_phone: string | null
+          agency_timezone: string | null
+          agency_url: string | null
+          gtfs_agency_id: string
+        }
+        Insert: {
+          agency_email?: string | null
+          agency_fare_url?: string | null
+          agency_id: string
+          agency_lang?: string | null
+          agency_name?: string | null
+          agency_phone?: string | null
+          agency_timezone?: string | null
+          agency_url?: string | null
+          gtfs_agency_id: string
+        }
+        Update: {
+          agency_email?: string | null
+          agency_fare_url?: string | null
+          agency_id?: string
+          agency_lang?: string | null
+          agency_name?: string | null
+          agency_phone?: string | null
+          agency_timezone?: string | null
+          agency_url?: string | null
+          gtfs_agency_id?: string
+        }
+        Relationships: []
+      }
+      gtfs_calendar: {
+        Row: {
+          agency_id: string
+          end_date: string
+          friday: boolean
+          monday: boolean
+          saturday: boolean
+          service_id: string
+          start_date: string
+          sunday: boolean
+          thursday: boolean
+          tuesday: boolean
+          wednesday: boolean
+        }
+        Insert: {
+          agency_id: string
+          end_date: string
+          friday?: boolean
+          monday?: boolean
+          saturday?: boolean
+          service_id: string
+          start_date: string
+          sunday?: boolean
+          thursday?: boolean
+          tuesday?: boolean
+          wednesday?: boolean
+        }
+        Update: {
+          agency_id?: string
+          end_date?: string
+          friday?: boolean
+          monday?: boolean
+          saturday?: boolean
+          service_id?: string
+          start_date?: string
+          sunday?: boolean
+          thursday?: boolean
+          tuesday?: boolean
+          wednesday?: boolean
+        }
+        Relationships: []
+      }
+      gtfs_calendar_dates: {
+        Row: {
+          agency_id: string
+          date: string
+          exception_type: number
+          service_id: string
+        }
+        Insert: {
+          agency_id: string
+          date: string
+          exception_type: number
+          service_id: string
+        }
+        Update: {
+          agency_id?: string
+          date?: string
+          exception_type?: number
+          service_id?: string
+        }
+        Relationships: []
+      }
+      gtfs_fare_attributes: {
+        Row: {
+          agency_id: string
+          currency_type: string | null
+          fare_id: string
+          payment_method: number | null
+          price: number | null
+          transfers: number | null
+        }
+        Insert: {
+          agency_id: string
+          currency_type?: string | null
+          fare_id: string
+          payment_method?: number | null
+          price?: number | null
+          transfers?: number | null
+        }
+        Update: {
+          agency_id?: string
+          currency_type?: string | null
+          fare_id?: string
+          payment_method?: number | null
+          price?: number | null
+          transfers?: number | null
+        }
+        Relationships: []
+      }
+      gtfs_fare_rules: {
+        Row: {
+          agency_id: string
+          destination_id: string
+          fare_id: string
+          origin_id: string
+        }
+        Insert: {
+          agency_id: string
+          destination_id?: string
+          fare_id: string
+          origin_id?: string
+        }
+        Update: {
+          agency_id?: string
+          destination_id?: string
+          fare_id?: string
+          origin_id?: string
+        }
+        Relationships: []
+      }
+      gtfs_feed_info: {
+        Row: {
+          agency_id: string
+          feed_end_date: string | null
+          feed_lang: string | null
+          feed_publisher_name: string | null
+          feed_publisher_url: string | null
+          feed_start_date: string | null
+          feed_version: string | null
+        }
+        Insert: {
+          agency_id: string
+          feed_end_date?: string | null
+          feed_lang?: string | null
+          feed_publisher_name?: string | null
+          feed_publisher_url?: string | null
+          feed_start_date?: string | null
+          feed_version?: string | null
+        }
+        Update: {
+          agency_id?: string
+          feed_end_date?: string | null
+          feed_lang?: string | null
+          feed_publisher_name?: string | null
+          feed_publisher_url?: string | null
+          feed_start_date?: string | null
+          feed_version?: string | null
+        }
+        Relationships: []
+      }
+      gtfs_feeds: {
+        Row: {
+          agency_id: string
+          created_at: string
+          feed_url: string
+          id: string
+          is_active: boolean
+          last_synced: string | null
+        }
+        Insert: {
+          agency_id: string
+          created_at?: string
+          feed_url: string
+          id?: string
+          is_active?: boolean
+          last_synced?: string | null
+        }
+        Update: {
+          agency_id?: string
+          created_at?: string
+          feed_url?: string
+          id?: string
+          is_active?: boolean
+          last_synced?: string | null
+        }
+        Relationships: []
+      }
+      gtfs_routes: {
+        Row: {
+          agency_id: string
+          gtfs_agency_id: string | null
+          route_desc: string | null
+          route_id: string
+          route_long_name: string | null
+          route_short_name: string | null
+          route_sort_order: number | null
+          route_type: number | null
+          route_url: string | null
+        }
+        Insert: {
+          agency_id: string
+          gtfs_agency_id?: string | null
+          route_desc?: string | null
+          route_id: string
+          route_long_name?: string | null
+          route_short_name?: string | null
+          route_sort_order?: number | null
+          route_type?: number | null
+          route_url?: string | null
+        }
+        Update: {
+          agency_id?: string
+          gtfs_agency_id?: string | null
+          route_desc?: string | null
+          route_id?: string
+          route_long_name?: string | null
+          route_short_name?: string | null
+          route_sort_order?: number | null
+          route_type?: number | null
+          route_url?: string | null
+        }
+        Relationships: []
+      }
+      gtfs_shapes: {
+        Row: {
+          agency_id: string
+          shape_id: string
+          shape_pt_lat: number
+          shape_pt_lon: number
+          shape_pt_sequence: number
+        }
+        Insert: {
+          agency_id: string
+          shape_id: string
+          shape_pt_lat: number
+          shape_pt_lon: number
+          shape_pt_sequence: number
+        }
+        Update: {
+          agency_id?: string
+          shape_id?: string
+          shape_pt_lat?: number
+          shape_pt_lon?: number
+          shape_pt_sequence?: number
+        }
+        Relationships: []
+      }
+      gtfs_stop_times: {
+        Row: {
+          agency_id: string
+          arrival_time: string | null
+          departure_time: string | null
+          drop_off_type: number | null
+          pickup_type: number | null
+          stop_id: string
+          stop_sequence: number
+          timepoint: number | null
+          trip_id: string
+        }
+        Insert: {
+          agency_id: string
+          arrival_time?: string | null
+          departure_time?: string | null
+          drop_off_type?: number | null
+          pickup_type?: number | null
+          stop_id: string
+          stop_sequence: number
+          timepoint?: number | null
+          trip_id: string
+        }
+        Update: {
+          agency_id?: string
+          arrival_time?: string | null
+          departure_time?: string | null
+          drop_off_type?: number | null
+          pickup_type?: number | null
+          stop_id?: string
+          stop_sequence?: number
+          timepoint?: number | null
+          trip_id?: string
+        }
+        Relationships: []
+      }
+      gtfs_stops: {
+        Row: {
+          agency_id: string
+          location_type: number | null
+          parent_station: string | null
+          stop_code: string | null
+          stop_id: string
+          stop_lat: number | null
+          stop_lon: number | null
+          stop_name: string | null
+          stop_url: string | null
+          wheelchair_boarding: number | null
+          zone_id: string | null
+        }
+        Insert: {
+          agency_id: string
+          location_type?: number | null
+          parent_station?: string | null
+          stop_code?: string | null
+          stop_id: string
+          stop_lat?: number | null
+          stop_lon?: number | null
+          stop_name?: string | null
+          stop_url?: string | null
+          wheelchair_boarding?: number | null
+          zone_id?: string | null
+        }
+        Update: {
+          agency_id?: string
+          location_type?: number | null
+          parent_station?: string | null
+          stop_code?: string | null
+          stop_id?: string
+          stop_lat?: number | null
+          stop_lon?: number | null
+          stop_name?: string | null
+          stop_url?: string | null
+          wheelchair_boarding?: number | null
+          zone_id?: string | null
+        }
+        Relationships: []
+      }
+      gtfs_sync_status: {
+        Row: {
+          agency_id: string
+          completed_at: string | null
+          error_msg: string | null
+          file_type: string
+          id: string
+          row_count: number | null
+          started_at: string | null
+          status: string
+        }
+        Insert: {
+          agency_id: string
+          completed_at?: string | null
+          error_msg?: string | null
+          file_type: string
+          id?: string
+          row_count?: number | null
+          started_at?: string | null
+          status?: string
+        }
+        Update: {
+          agency_id?: string
+          completed_at?: string | null
+          error_msg?: string | null
+          file_type?: string
+          id?: string
+          row_count?: number | null
+          started_at?: string | null
+          status?: string
+        }
+        Relationships: []
+      }
+      gtfs_transfers: {
+        Row: {
+          agency_id: string
+          from_stop_id: string
+          min_transfer_time: number | null
+          to_stop_id: string
+          transfer_type: number | null
+        }
+        Insert: {
+          agency_id: string
+          from_stop_id: string
+          min_transfer_time?: number | null
+          to_stop_id: string
+          transfer_type?: number | null
+        }
+        Update: {
+          agency_id?: string
+          from_stop_id?: string
+          min_transfer_time?: number | null
+          to_stop_id?: string
+          transfer_type?: number | null
+        }
+        Relationships: []
+      }
+      gtfs_trips: {
+        Row: {
+          agency_id: string
+          bikes_allowed: number | null
+          block_id: string | null
+          direction_id: number | null
+          route_id: string
+          route_variant: string | null
+          service_id: string
+          shape_id: string | null
+          trip_headsign: string | null
+          trip_id: string
+          trip_short_name: string | null
+          wheelchair_accessible: number | null
+        }
+        Insert: {
+          agency_id: string
+          bikes_allowed?: number | null
+          block_id?: string | null
+          direction_id?: number | null
+          route_id: string
+          route_variant?: string | null
+          service_id: string
+          shape_id?: string | null
+          trip_headsign?: string | null
+          trip_id: string
+          trip_short_name?: string | null
+          wheelchair_accessible?: number | null
+        }
+        Update: {
+          agency_id?: string
+          bikes_allowed?: number | null
+          block_id?: string | null
+          direction_id?: number | null
+          route_id?: string
+          route_variant?: string | null
+          service_id?: string
+          shape_id?: string | null
+          trip_headsign?: string | null
+          trip_id?: string
+          trip_short_name?: string | null
+          wheelchair_accessible?: number | null
+        }
+        Relationships: []
+      }
       vehicle_cache: {
         Row: {
           agency_status: Json | null
