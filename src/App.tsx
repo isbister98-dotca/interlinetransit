@@ -28,6 +28,7 @@ const App = () => (
             <Route path="/social" element={<SocialScreen />} />
             <Route path="/profile" element={<ProfileScreen />} />
             <Route path="/attributions" element={<AttributionsScreen />} />
+            <Route path="/admin/gtfs" element={<AdminGtfsScreen />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
           <BottomNav />
