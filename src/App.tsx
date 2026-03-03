@@ -9,6 +9,7 @@ import JourneyScreen from "@/pages/JourneyScreen";
 import SocialScreen from "@/pages/SocialScreen";
 import ProfileScreen from "@/pages/ProfileScreen";
 import AttributionsScreen from "@/pages/AttributionsScreen";
+import AdminGtfsScreen from "@/pages/AdminGtfsScreen";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -27,6 +28,7 @@ const App = () => (
             <Route path="/social" element={<SocialScreen />} />
             <Route path="/profile" element={<ProfileScreen />} />
             <Route path="/attributions" element={<AttributionsScreen />} />
+            <Route path="/admin/gtfs" element={<AdminGtfsScreen />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
           <BottomNav />
