@@ -93,23 +93,43 @@ export default function AdminGtfsScreen() {
     fetchData();
   };
 
-  const syncAgency = async (agencyId: string) => {
-    setSyncing(prev => ({ ...prev, [agencyId]: true }));
+  const PAGINATED_FUNCTIONS = ["gtfs-sync-shapes", "gtfs-sync-stop-times"];
+
+  const callFunction = async (fn: string, agencyId: string, page = 0): Promise<any> => {
     const projectId = import.meta.env.VITE_SUPABASE_PROJECT_ID;
     const anonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+    const pageParam = PAGINATED_FUNCTIONS.includes(fn) ? `&page=${page}` : "";
+    const res = await fetch(
+      `https://${projectId}.supabase.co/functions/v1/${fn}?agency_id=${encodeURIComponent(agencyId)}${pageParam}`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${anonKey}`,
+        },
+      }
+    );
+    if (!res.ok) return null;
+    return res.json();
+  };
+
+  const syncAgency = async (agencyId: string) => {
+    setSyncing(prev => ({ ...prev, [agencyId]: true }));
 
     for (const fn of SYNC_FUNCTIONS) {
       try {
-        await fetch(
-          `https://${projectId}.supabase.co/functions/v1/${fn}?agency_id=${encodeURIComponent(agencyId)}`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${anonKey}`,
-            },
+        if (PAGINATED_FUNCTIONS.includes(fn)) {
+          // Chain paginated calls until hasMore is false
+          let page = 0;
+          while (true) {
+            const result = await callFunction(fn, agencyId, page);
+            const agencyResult = result?.results?.[agencyId];
+            if (!agencyResult?.hasMore) break;
+            page++;
           }
-        );
+        } else {
+          await callFunction(fn, agencyId);
+        }
       } catch (e) {
         console.error(`Error calling ${fn} for ${agencyId}:`, e);
       }
