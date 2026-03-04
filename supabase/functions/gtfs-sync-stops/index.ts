@@ -55,8 +55,9 @@ Deno.serve(async (req) => {
       try {
         const res = await fetch(feed.feed_url);
         if (!res.ok) throw new Error(`Download failed: ${res.status}`);
-        const buf = new Uint8Array(await res.arrayBuffer());
-        const files = unzipSync(buf);
+        let buf: Uint8Array | null = new Uint8Array(await res.arrayBuffer());
+        const files = unzipSync(buf, { filter: (f) => f.name.endsWith("stops.txt") });
+        buf = null;
 
         let totalRows = 0;
 
