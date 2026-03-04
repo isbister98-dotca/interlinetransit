@@ -21,12 +21,18 @@ function parseCSV(text: string): Record<string, string>[] {
 async function downloadAndExtract(url: string, targetFiles: string[]): Promise<Record<string, string>> {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Download failed: ${res.status}`);
-  const buf = new Uint8Array(await res.arrayBuffer());
-  const files = unzipSync(buf);
+  let buf: Uint8Array | null = new Uint8Array(await res.arrayBuffer());
+  const files = unzipSync(buf, {
+    filter: (file) => targetFiles.some(t => file.name.endsWith(t)),
+  });
+  buf = null;
   const result: Record<string, string> = {};
   for (const name of targetFiles) {
     const key = Object.keys(files).find(k => k.endsWith(name));
-    if (key) result[name] = new TextDecoder().decode(files[key]);
+    if (key) {
+      result[name] = new TextDecoder().decode(files[key]);
+      delete files[key];
+    }
   }
   return result;
 }

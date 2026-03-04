@@ -55,11 +55,13 @@ Deno.serve(async (req) => {
       try {
         const res = await fetch(feed.feed_url);
         if (!res.ok) throw new Error(`Download failed: ${res.status}`);
-        const buf = new Uint8Array(await res.arrayBuffer());
-        const files = unzipSync(buf);
+        let buf: Uint8Array | null = new Uint8Array(await res.arrayBuffer());
+        const files = unzipSync(buf, { filter: (f) => f.name.endsWith("routes.txt") });
+        buf = null;
         const key = Object.keys(files).find(k => k.endsWith("routes.txt"));
         if (!key) throw new Error("routes.txt not found in zip");
         const text = new TextDecoder().decode(files[key]);
+        delete files[key];
         const rows = parseCSV(text);
 
         await supabase.from("gtfs_routes").delete().eq("agency_id", agencyId);
