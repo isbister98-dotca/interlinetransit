@@ -185,7 +185,7 @@ Deno.serve(async (req) => {
           });
 
           if (batch.length >= 2000) {
-            const { error } = await supabase.from("gtfs_stop_times").insert(batch);
+            const { error } = await supabase.from("gtfs_stop_times").upsert(batch, { onConflict: "agency_id,trip_id,stop_sequence" });
             if (error) throw error;
             totalRows += batch.length;
             batch = [];
@@ -193,7 +193,7 @@ Deno.serve(async (req) => {
         }
 
         if (batch.length > 0) {
-          const { error } = await supabase.from("gtfs_stop_times").insert(batch);
+          const { error } = await supabase.from("gtfs_stop_times").upsert(batch, { onConflict: "agency_id,trip_id,stop_sequence" });
           if (error) throw error;
           totalRows += batch.length;
         }
