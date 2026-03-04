@@ -7,6 +7,7 @@ const corsHeaders = {
 };
 
 const PAGE_SIZE = 50000;
+const CSV_DECODE_CHUNK_BYTES = 256 * 1024;
 
 async function getActiveServiceIds(supabase: any, agencyId: string): Promise<Set<string>> {
   const now = new Date();
@@ -52,6 +53,92 @@ async function getActiveTripIds(supabase: any, agencyId: string, serviceIds: Set
     }
   }
   return tripIds;
+}
+
+function parseCsvLine(line: string): string[] {
+  const out: string[] = [];
+  let value = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+
+    if (ch === '"') {
+      if (inQuotes && line[i + 1] === '"') {
+        value += '"';
+        i++;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+
+    if (ch === "," && !inQuotes) {
+      out.push(value);
+      value = "";
+      continue;
+    }
+
+    value += ch;
+  }
+
+  out.push(value);
+  return out;
+}
+
+function getCsvFieldAtIndex(line: string, targetIndex: number): string {
+  if (targetIndex < 0) return "";
+
+  let currentIndex = 0;
+  let value = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+
+    if (ch === '"') {
+      if (inQuotes && line[i + 1] === '"') {
+        if (currentIndex === targetIndex) value += '"';
+        i++;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+
+    if (ch === "," && !inQuotes) {
+      if (currentIndex === targetIndex) return value;
+      currentIndex++;
+      value = "";
+      continue;
+    }
+
+    if (currentIndex === targetIndex) value += ch;
+  }
+
+  return currentIndex === targetIndex ? value : "";
+}
+
+function* iterateCsvLines(bytes: Uint8Array): Generator<string, void, unknown> {
+  const decoder = new TextDecoder();
+  let carry = "";
+
+  for (let offset = 0; offset < bytes.length; offset += CSV_DECODE_CHUNK_BYTES) {
+    const chunk = bytes.subarray(offset, Math.min(offset + CSV_DECODE_CHUNK_BYTES, bytes.length));
+    carry += decoder.decode(chunk, { stream: true });
+
+    let nl = carry.indexOf("\n");
+    while (nl >= 0) {
+      const line = carry.slice(0, nl).replace(/\r/g, "");
+      yield line;
+      carry = carry.slice(nl + 1);
+      nl = carry.indexOf("\n");
+    }
+  }
+
+  carry += decoder.decode();
+  const finalLine = carry.replace(/\r/g, "");
+  if (finalLine) yield finalLine;
 }
 
 Deno.serve(async (req) => {
@@ -110,75 +197,79 @@ Deno.serve(async (req) => {
         const key = Object.keys(zipFiles).find(k => k.endsWith("stop_times.txt"));
         if (!key) throw new Error("stop_times.txt not found in zip");
 
-        const text = new TextDecoder().decode(zipFiles[key]);
+        let stopTimesBytes: Uint8Array | null = zipFiles[key];
         delete zipFiles[key];
 
-        // Parse header
-        const firstNewline = text.indexOf("\n");
-        if (firstNewline < 0) throw new Error("stop_times.txt is empty");
-        const headerLine = text.substring(0, firstNewline).replace(/\r/g, "").replace(/^\uFEFF/, "");
-        const headers = headerLine.split(",").map(h => h.trim());
-        const idxTripId = headers.indexOf("trip_id");
-        const idxArrival = headers.indexOf("arrival_time");
-        const idxDeparture = headers.indexOf("departure_time");
-        const idxStopId = headers.indexOf("stop_id");
-        const idxSeq = headers.indexOf("stop_sequence");
-        const idxPickup = headers.indexOf("pickup_type");
-        const idxDropoff = headers.indexOf("drop_off_type");
-        const idxTimepoint = headers.indexOf("timepoint");
+        if (!stopTimesBytes) throw new Error("stop_times.txt is empty");
 
-        // Skip to the right page of MATCHING (filtered) rows
-        // We need to scan from the beginning each time since filtering changes row counts
-        // But we skip non-matching rows without counting them toward the page
-        let pos = firstNewline + 1;
-        let matchCount = 0;
+        let idxTripId = -1;
+        let idxArrival = -1;
+        let idxDeparture = -1;
+        let idxStopId = -1;
+        let idxSeq = -1;
+        let idxPickup = -1;
+        let idxDropoff = -1;
+        let idxTimepoint = -1;
+
+        let headerParsed = false;
         const skipUntil = page * PAGE_SIZE;
+        let matchedCount = 0;
+        let processedInPage = 0;
+        let hasMore = false;
+        let batch: any[] = [];
+        let totalRows = 0;
 
         // On page 0, delete existing data
         if (page === 0) {
           await supabase.from("gtfs_stop_times").delete().eq("agency_id", agencyId);
         }
 
-        // Skip rows for previous pages
-        while (pos < text.length && matchCount < skipUntil) {
-          const nl = text.indexOf("\n", pos);
-          const lineEnd = nl < 0 ? text.length : nl;
-          const line = text.substring(pos, lineEnd);
-          pos = nl < 0 ? text.length : nl + 1;
-
-          const commaIdx = line.indexOf(",");
-          // Quick check: extract trip_id (first field typically, but use index)
-          const vals = line.split(",");
-          const tripId = vals[idxTripId]?.trim();
-          if (tripId && activeTripIds.has(tripId)) {
-            matchCount++;
-          }
-        }
-
-        // Now process PAGE_SIZE matching rows
-        let batch: any[] = [];
-        let totalRows = 0;
-        let processedInPage = 0;
-
-        while (pos < text.length && processedInPage < PAGE_SIZE) {
-          const nl = text.indexOf("\n", pos);
-          const lineEnd = nl < 0 ? text.length : nl;
-          const line = text.substring(pos, lineEnd).replace(/\r/g, "").trim();
-          pos = nl < 0 ? text.length : nl + 1;
-
+        for (const rawLine of iterateCsvLines(stopTimesBytes)) {
+          const line = rawLine.trim();
           if (!line) continue;
-          const vals = line.split(",");
-          const tripId = vals[idxTripId]?.trim();
+
+          if (!headerParsed) {
+            const headers = parseCsvLine(line.replace(/^\uFEFF/, "")).map((h) => h.trim());
+            idxTripId = headers.indexOf("trip_id");
+            idxArrival = headers.indexOf("arrival_time");
+            idxDeparture = headers.indexOf("departure_time");
+            idxStopId = headers.indexOf("stop_id");
+            idxSeq = headers.indexOf("stop_sequence");
+            idxPickup = headers.indexOf("pickup_type");
+            idxDropoff = headers.indexOf("drop_off_type");
+            idxTimepoint = headers.indexOf("timepoint");
+
+            if (idxTripId < 0 || idxStopId < 0 || idxSeq < 0) {
+              throw new Error("stop_times.txt missing required columns");
+            }
+
+            headerParsed = true;
+            continue;
+          }
+
+          const tripId = getCsvFieldAtIndex(line, idxTripId).trim();
           if (!tripId || !activeTripIds.has(tripId)) continue;
 
+          if (matchedCount < skipUntil) {
+            matchedCount++;
+            continue;
+          }
+
+          if (processedInPage >= PAGE_SIZE) {
+            hasMore = true;
+            break;
+          }
+
+          const vals = parseCsvLine(line);
           processedInPage++;
+
           batch.push({
             agency_id: agencyId,
             trip_id: tripId,
             stop_id: vals[idxStopId]?.trim() || "",
             stop_sequence: parseInt(vals[idxSeq]?.trim() || "0"),
-            arrival_time: vals[idxArrival]?.trim() || null,
-            departure_time: vals[idxDeparture]?.trim() || null,
+            arrival_time: idxArrival >= 0 ? (vals[idxArrival]?.trim() || null) : null,
+            departure_time: idxDeparture >= 0 ? (vals[idxDeparture]?.trim() || null) : null,
             pickup_type: idxPickup >= 0 && vals[idxPickup]?.trim() ? parseInt(vals[idxPickup].trim()) : null,
             drop_off_type: idxDropoff >= 0 && vals[idxDropoff]?.trim() ? parseInt(vals[idxDropoff].trim()) : null,
             timepoint: idxTimepoint >= 0 && vals[idxTimepoint]?.trim() ? parseInt(vals[idxTimepoint].trim()) : null,
@@ -192,26 +283,14 @@ Deno.serve(async (req) => {
           }
         }
 
+        stopTimesBytes = null;
+
+        if (!headerParsed) throw new Error("stop_times.txt is empty");
+
         if (batch.length > 0) {
           const { error } = await supabase.from("gtfs_stop_times").upsert(batch, { onConflict: "agency_id,trip_id,stop_sequence" });
           if (error) throw error;
           totalRows += batch.length;
-        }
-
-        // Check if more matching rows exist
-        let hasMore = false;
-        while (pos < text.length) {
-          const nl = text.indexOf("\n", pos);
-          const lineEnd = nl < 0 ? text.length : nl;
-          const line = text.substring(pos, lineEnd).trim();
-          pos = nl < 0 ? text.length : nl + 1;
-          if (!line) continue;
-          const vals = line.split(",");
-          const tripId = vals[idxTripId]?.trim();
-          if (tripId && activeTripIds.has(tripId)) {
-            hasMore = true;
-            break;
-          }
         }
 
         if (!hasMore) {
