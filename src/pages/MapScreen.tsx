@@ -141,9 +141,10 @@ function createStopIcon() {
 }
 
 type SheetMode = "nearby" | "place" | "route" | "station" | "vehicle" | "hidden";
+type LayerMode = "routes" | "vehicles" | "everything" | "off";
 
 export default function MapScreen() {
-  const [showLayers, setShowLayers] = useState(true);
+  const [layerMode, setLayerMode] = useState<LayerMode>("vehicles");
   const [sheetExpanded, setSheetExpanded] = useState(false);
   const [sheetMode, setSheetMode] = useState<SheetMode>("nearby");
 
@@ -166,9 +167,12 @@ export default function MapScreen() {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
   const vehicleLayerRef = useRef<L.LayerGroup | null>(null);
+  const shapesLayerRef = useRef<L.LayerGroup | null>(null);
   const overlayLayerRef = useRef<L.LayerGroup | null>(null);
   const vehiclesRef = useRef<Vehicle[]>([]);
+  const layerModeRef = useRef<LayerMode>("vehicles");
   const showLayersRef = useRef(true);
+  const shapesDrawnRef = useRef(false);
   const selectedRouteRef = useRef<RouteResult | null>(null);
   const destinationMarkerRef = useRef<L.Marker | null>(null);
   const routeLineRef = useRef<L.Polyline | null>(null);
