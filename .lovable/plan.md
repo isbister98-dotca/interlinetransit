@@ -1,23 +1,22 @@
 
+# GTFS Schedule Data Integration — IMPLEMENTED
 
-## Plan: Remove redundant "/" route
+## Status: ✅ Complete
 
-**Change**: In `src/App.tsx`, remove the `<Route path="/" element={<Navigate to="/map" replace />} />` line and change the `/map` route to handle both `/` and `/map` by making it the index route.
+All phases implemented:
+1. ✅ 14 database tables created (12 GTFS data + gtfs_feeds + gtfs_sync_status) with RLS
+2. ✅ 4 initial feeds seeded (GO, UP, TTC, MiWay)
+3. ✅ 8 edge functions deployed (agency, calendar, routes, stops, trips, shapes, transfers, stop-times)
+4. ✅ Admin page at /admin/gtfs with feed management + sync status
+5. ✅ 32 cron jobs configured (28 weekly Monday 3am ET + 4 daily 3am ET for stop_times)
+6. ✅ Tested: GO agency sync returns 2 rows successfully
 
-**File: `src/App.tsx`**
-- Remove the `Navigate` import (no longer needed)
-- Remove the `/` redirect route
-- Add `path="/"` as an additional route pointing to `MapScreen`, or simply change `/map` to handle both by keeping `/map` and adding a wildcard catch that redirects unknown routes
+## Architecture
+- Per-agency function calls to avoid timeouts
+- stop_times filtered to rolling 7-day window via calendar cross-reference
+- Batched inserts (500 rows) for large files
+- gtfs_sync_status table tracks progress and errors
 
-Actually, the simplest approach: just replace the `Navigate` redirect route with making `/map` serve as the index. Since `BottomNav` likely links to `/map`, we should keep `/map` working. The cleanest solution:
-
-- Remove the `<Route path="/" ...Navigate... />` line
-- Change `<Route path="/map" element={<MapScreen />} />` to `<Route index element={<MapScreen />} />` and add a second route `<Route path="/map" element={<MapScreen />} />` — or just keep the redirect but swap to make `/map` the canonical and `/` simply not exist.
-
-Given the bottom nav links to `/map`, the simplest fix is just removing the `/` redirect route entirely. Users hitting `/` will get the NotFound page, but that's fine since the app entry is `/map`. Or we keep the redirect for UX. Let me check what the user actually wants.
-
-The user said "eliminate the `/` and default to `/map`" — they want `/map` to be the landing page. The current redirect already does this. They likely just want to clean up the redundant route. Simplest: remove the `/` route and the `Navigate` import. If someone hits `/` they'll see NotFound, which is acceptable since the app is a `/map`-first app.
-
-**Changes:**
-1. **`src/App.tsx`**: Remove the `Navigate` import and the `<Route path="/" ... />` line.
-
+## Cron Schedule
+- **Weekly (Monday 3am ET)**: agency, calendar, routes, stops, trips, shapes, transfers
+- **Daily (3am ET)**: stop_times (rolling 7 days)
