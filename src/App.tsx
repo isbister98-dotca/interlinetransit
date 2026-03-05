@@ -2,7 +2,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { BottomNav } from "@/components/layout/BottomNav";
 import MapScreen from "@/pages/MapScreen";
 import JourneyScreen from "@/pages/JourneyScreen";
@@ -22,7 +22,6 @@ const App = () => (
       <BrowserRouter>
         <div className="min-h-[100dvh] bg-background overflow-y-auto scrollbar-hide">
           <Routes>
-            <Route path="/" element={<Navigate to="/map" replace />} />
             <Route path="/map" element={<MapScreen />} />
             <Route path="/journey" element={<JourneyScreen />} />
             <Route path="/social" element={<SocialScreen />} />
