@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import L from "leaflet";
-import { Layers, X, Navigation } from "lucide-react";
+import { Route, Train, Sparkles, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { MOCK_DEPARTURES } from "@/lib/mock-data";
 import { AGENCY_COLORS, type Vehicle } from "@/lib/types";
