@@ -178,9 +178,10 @@ export default function MapScreen() {
   const routeLineRef = useRef<L.Polyline | null>(null);
 
   const { vehicles } = useVehicles();
+  const { shapes } = useRouteShapes();
   vehiclesRef.current = vehicles;
-  showLayersRef.current = showLayers;
-
+  layerModeRef.current = layerMode;
+  showLayersRef.current = layerMode === "vehicles" || layerMode === "everything";
   const clearOverlays = useCallback(() => {
     if (destinationMarkerRef.current && mapRef.current) {
       mapRef.current.removeLayer(destinationMarkerRef.current);
