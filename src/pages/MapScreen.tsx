@@ -7,6 +7,7 @@ import { AGENCY_COLORS, type Vehicle } from "@/lib/types";
 import { LivePill } from "@/components/transit/LivePill";
 import { DepartureRow } from "@/components/transit/DepartureRow";
 import { useVehicles } from "@/hooks/use-vehicles";
+import { useRouteShapes } from "@/hooks/use-route-shapes";
 import { SearchBar } from "@/components/map/SearchBar";
 import { SheetPlaceDetail } from "@/components/map/SheetPlaceDetail";
 import { SheetRouteDetail } from "@/components/map/SheetRouteDetail";
