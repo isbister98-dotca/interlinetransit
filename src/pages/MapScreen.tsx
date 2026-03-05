@@ -1,12 +1,13 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import L from "leaflet";
-import { Layers, X, Navigation } from "lucide-react";
+import { Route, Train, Sparkles, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { MOCK_DEPARTURES } from "@/lib/mock-data";
 import { AGENCY_COLORS, type Vehicle } from "@/lib/types";
 import { LivePill } from "@/components/transit/LivePill";
 import { DepartureRow } from "@/components/transit/DepartureRow";
 import { useVehicles } from "@/hooks/use-vehicles";
+import { useRouteShapes } from "@/hooks/use-route-shapes";
 import { SearchBar } from "@/components/map/SearchBar";
 import { SheetPlaceDetail } from "@/components/map/SheetPlaceDetail";
 import { SheetRouteDetail } from "@/components/map/SheetRouteDetail";
@@ -140,9 +141,10 @@ function createStopIcon() {
 }
 
 type SheetMode = "nearby" | "place" | "route" | "station" | "vehicle" | "hidden";
+type LayerMode = "routes" | "vehicles" | "everything" | "off";
 
 export default function MapScreen() {
-  const [showLayers, setShowLayers] = useState(true);
+  const [layerMode, setLayerMode] = useState<LayerMode>("vehicles");
   const [sheetExpanded, setSheetExpanded] = useState(false);
   const [sheetMode, setSheetMode] = useState<SheetMode>("nearby");
 
@@ -165,17 +167,21 @@ export default function MapScreen() {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
   const vehicleLayerRef = useRef<L.LayerGroup | null>(null);
+  const shapesLayerRef = useRef<L.LayerGroup | null>(null);
   const overlayLayerRef = useRef<L.LayerGroup | null>(null);
   const vehiclesRef = useRef<Vehicle[]>([]);
+  const layerModeRef = useRef<LayerMode>("vehicles");
   const showLayersRef = useRef(true);
+  const shapesDrawnRef = useRef(false);
   const selectedRouteRef = useRef<RouteResult | null>(null);
   const destinationMarkerRef = useRef<L.Marker | null>(null);
   const routeLineRef = useRef<L.Polyline | null>(null);
 
   const { vehicles } = useVehicles();
+  const { shapes } = useRouteShapes();
   vehiclesRef.current = vehicles;
-  showLayersRef.current = showLayers;
-
+  layerModeRef.current = layerMode;
+  showLayersRef.current = layerMode === "vehicles" || layerMode === "everything";
   const clearOverlays = useCallback(() => {
     if (destinationMarkerRef.current && mapRef.current) {
       mapRef.current.removeLayer(destinationMarkerRef.current);
@@ -374,9 +380,11 @@ export default function MapScreen() {
     userMarkerRef.current = userMarker;
 
     const vehicleLayer = L.layerGroup().addTo(map);
+    const shapesLayer = L.layerGroup().addTo(map);
     const overlayLayer = L.layerGroup().addTo(map);
     mapRef.current = map;
     vehicleLayerRef.current = vehicleLayer;
+    shapesLayerRef.current = shapesLayer;
     overlayLayerRef.current = overlayLayer;
 
     map.on("click", (e: L.LeafletMouseEvent) => handleMapClick(e));
@@ -393,14 +401,47 @@ export default function MapScreen() {
       map.remove();
       mapRef.current = null;
       vehicleLayerRef.current = null;
+      shapesLayerRef.current = null;
       overlayLayerRef.current = null;
     };
   }, [syncMarkers, handleMapClick]);
 
+  // Sync vehicles on data/mode change
   useEffect(() => {
     selectedRouteRef.current = selectedRoute;
     syncMarkers();
-  }, [vehicles, showLayers, selectedRoute, syncMarkers]);
+  }, [vehicles, layerMode, selectedRoute, syncMarkers]);
+
+  // Draw shapes when data arrives or mode changes
+  useEffect(() => {
+    const layer = shapesLayerRef.current;
+    if (!layer) return;
+
+    const showShapes = layerMode === "routes" || layerMode === "everything";
+
+    if (!showShapes) {
+      layer.clearLayers();
+      shapesDrawnRef.current = false;
+      return;
+    }
+
+    // Only redraw if not already drawn
+    if (shapesDrawnRef.current && layer.getLayers().length > 0) return;
+    if (shapes.length === 0) return;
+
+    layer.clearLayers();
+    shapes.forEach((shape) => {
+      if (shape.coords.length < 2) return;
+      const color = `hsl(${AGENCY_COLORS[shape.agency_id] || "0 0% 50%"})`;
+      L.polyline(shape.coords, {
+        color,
+        weight: 2,
+        opacity: 0.45,
+        interactive: false,
+      }).addTo(layer);
+    });
+    shapesDrawnRef.current = true;
+  }, [shapes, layerMode]);
 
   const isSheetVisible = sheetMode !== "hidden";
 
@@ -416,17 +457,34 @@ export default function MapScreen() {
         onSelect={handleSearchSelect}
       />
 
-      {/* Layers toggle */}
-      <button
-        onClick={() => setShowLayers(!showLayers)}
-        className={cn(
-          "absolute top-[68px] right-4 z-[1000] flex items-center gap-2 px-3 py-2 rounded-md text-sm font-semibold transition-all",
-          "bg-card border border-border",
-          showLayers ? "text-primary" : "text-muted-foreground"
-        )}
-      >
-        <Layers className="w-4 h-4" />
-      </button>
+      {/* Layers control */}
+      <div className="absolute top-[68px] right-4 z-[1000] flex items-center rounded-lg overflow-hidden bg-card border border-border">
+        {([
+          { mode: "routes" as LayerMode, icon: Route, label: "Routes" },
+          { mode: "vehicles" as LayerMode, icon: Train, label: "Vehicles" },
+          { mode: "everything" as LayerMode, icon: Sparkles, label: "All" },
+        ]).map(({ mode, icon: Icon, label }) => (
+          <button
+            key={mode}
+            onClick={() => {
+              if (mode === "everything" && layerMode === "everything") {
+                setLayerMode("off");
+              } else {
+                setLayerMode(mode);
+              }
+            }}
+            className={cn(
+              "flex items-center gap-1.5 px-3 py-2 text-xs font-semibold transition-colors",
+              layerMode === mode
+                ? "bg-primary text-primary-foreground"
+                : "text-muted-foreground hover:text-foreground"
+            )}
+          >
+            <Icon className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">{label}</span>
+          </button>
+        ))}
+      </div>
 
       {/* Back to nearby button when in a detail mode */}
       {sheetMode !== "nearby" && sheetMode !== "hidden" && (
