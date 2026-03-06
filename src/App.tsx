@@ -22,7 +22,7 @@ const App = () => (
       <BrowserRouter>
         <div className="min-h-[100dvh] bg-background overflow-y-auto scrollbar-hide">
           <Routes>
-            <Route path="/map" element={<MapScreen />} />
+            <Route path="/" element={<MapScreen />} />
             <Route path="/journey" element={<JourneyScreen />} />
             <Route path="/social" element={<SocialScreen />} />
             <Route path="/profile" element={<ProfileScreen />} />
