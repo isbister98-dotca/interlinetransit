@@ -264,13 +264,33 @@ export default function MapScreen() {
     setSelectedVehicle(vehicle);
     setSheetMode("vehicle");
     setSheetExpanded(false);
-    
+
+    // Zoom to clicked vehicle
+    const map = mapRef.current;
+    if (map) {
+      map.flyTo([vehicle.lat, vehicle.lng], 15, { duration: 0.8 });
+    }
+
+    // Draw the vehicle's route shape from cached shapes onto overlay layer
+    const matchingShape = shapes.find(
+      (s) => s.agency_id === vehicle.agency && s.route_id === vehicle.routeId
+    );
+    if (matchingShape && matchingShape.coords.length >= 2 && overlayLayerRef.current) {
+      const color = `hsl(${AGENCY_COLORS[vehicle.agency] || "0 0% 50%"})`;
+      L.polyline(matchingShape.coords, {
+        color,
+        weight: 3,
+        opacity: 0.7,
+        interactive: false,
+      }).addTo(overlayLayerRef.current);
+    }
+
     // Fetch route geometry for stop timeline
     setRouteLoading(true);
     const geo = await fetchRouteGeometry(vehicle.routeId, vehicle.agency);
     setRouteGeometry(geo);
     setRouteLoading(false);
-  }, [clearOverlays]);
+  }, [clearOverlays, shapes]);
 
   // Get directions for place
   const handleGetDirections = useCallback(async () => {
