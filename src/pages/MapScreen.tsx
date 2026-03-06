@@ -177,6 +177,7 @@ export default function MapScreen() {
   const showLayersRef = useRef(true);
   const shapesDrawnRef = useRef(false);
   const selectedRouteRef = useRef<RouteResult | null>(null);
+  const selectedVehicleRef = useRef<Vehicle | null>(null);
   const destinationMarkerRef = useRef<L.Marker | null>(null);
   const routeLineRef = useRef<L.Polyline | null>(null);
 
