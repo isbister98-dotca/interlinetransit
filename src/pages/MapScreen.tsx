@@ -86,9 +86,12 @@ function formatDistance(meters: number) {
   return `${(meters / 1000).toFixed(1)} km`;
 }
 
-function createVehicleIcon(vehicle: Vehicle) {
+function createVehicleIcon(vehicle: Vehicle, highlighted = false) {
   const color = AGENCY_COLORS[vehicle.agency];
   const icon = VEHICLE_ICONS[vehicle.vehicleType] ?? VEHICLE_ICONS.bus;
+  const glowStyle = highlighted
+    ? "box-shadow: 0 0 0 3px hsl(93,50%,56%), 0 2px 8px rgba(0,0,0,0.5);"
+    : "box-shadow: 0 2px 8px rgba(0,0,0,0.5);";
   return L.divIcon({
     className: "vehicle-marker",
     html: `<div style="
@@ -97,7 +100,7 @@ function createVehicleIcon(vehicle: Vehicle) {
       font-size: 10px; font-weight: 700;
       font-family: 'IBM Plex Mono', monospace;
       padding: 3px 7px 3px 5px; border-radius: 8px;
-      white-space: nowrap; box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+      white-space: nowrap; ${glowStyle}
       pointer-events: auto; cursor: pointer;
     ">${icon}<span>${vehicle.routeId}</span></div>`,
     iconSize: [50, 24],
@@ -174,6 +177,7 @@ export default function MapScreen() {
   const showLayersRef = useRef(true);
   const shapesDrawnRef = useRef(false);
   const selectedRouteRef = useRef<RouteResult | null>(null);
+  const selectedVehicleRef = useRef<Vehicle | null>(null);
   const destinationMarkerRef = useRef<L.Marker | null>(null);
   const routeLineRef = useRef<L.Polyline | null>(null);
 
@@ -260,13 +264,33 @@ export default function MapScreen() {
     setSelectedVehicle(vehicle);
     setSheetMode("vehicle");
     setSheetExpanded(false);
-    
+
+    // Zoom to clicked vehicle
+    const map = mapRef.current;
+    if (map) {
+      map.flyTo([vehicle.lat, vehicle.lng], 15, { duration: 0.8 });
+    }
+
+    // Draw the vehicle's route shape from cached shapes onto overlay layer
+    const matchingShape = shapes.find(
+      (s) => s.agency_id === vehicle.agency && s.route_id === vehicle.routeId
+    );
+    if (matchingShape && matchingShape.coords.length >= 2 && overlayLayerRef.current) {
+      const color = `hsl(${AGENCY_COLORS[vehicle.agency] || "0 0% 50%"})`;
+      L.polyline(matchingShape.coords, {
+        color,
+        weight: 3,
+        opacity: 0.7,
+        interactive: false,
+      }).addTo(overlayLayerRef.current);
+    }
+
     // Fetch route geometry for stop timeline
     setRouteLoading(true);
     const geo = await fetchRouteGeometry(vehicle.routeId, vehicle.agency);
     setRouteGeometry(geo);
     setRouteLoading(false);
-  }, [clearOverlays]);
+  }, [clearOverlays, shapes]);
 
   // Get directions for place
   const handleGetDirections = useCallback(async () => {
@@ -338,24 +362,34 @@ export default function MapScreen() {
     if (!layer || !map) return;
     layer.clearLayers();
 
-    if (!showLayersRef.current) return;
+    if (!showLayersRef.current && !selectedVehicleRef.current) return;
 
     const activeRoute = selectedRouteRef.current;
+    const activeVehicle = selectedVehicleRef.current;
     const zoom = map.getZoom();
 
     vehiclesRef.current.forEach((v) => {
-      // If a route is selected, only show vehicles matching both routeId AND agency
-      if (activeRoute && (v.routeId !== activeRoute.routeId || v.agency !== activeRoute.agency)) return;
+      // If a vehicle is selected, only show vehicles matching its route + agency
+      if (activeVehicle) {
+        if (v.routeId !== activeVehicle.routeId || v.agency !== activeVehicle.agency) return;
+      } else {
+        // If a route is selected, only show vehicles matching both routeId AND agency
+        if (activeRoute && (v.routeId !== activeRoute.routeId || v.agency !== activeRoute.agency)) return;
 
-      // Zoom-based priority filtering (skip when a specific route is selected)
-      if (!activeRoute) {
-        const isTrain = v.vehicleType === "train" || v.vehicleType === "subway";
-        const isTram = v.vehicleType === "tram";
-        if (zoom <= 10 && !isTrain) return;
-        if (zoom > 10 && zoom <= 12 && !isTrain && !isTram) return;
+        // Hide vehicles if layers are off
+        if (!showLayersRef.current) return;
+
+        // Zoom-based priority filtering (skip when a specific route is selected)
+        if (!activeRoute) {
+          const isTrain = v.vehicleType === "train" || v.vehicleType === "subway";
+          const isTram = v.vehicleType === "tram";
+          if (zoom <= 10 && !isTrain) return;
+          if (zoom > 10 && zoom <= 12 && !isTrain && !isTram) return;
+        }
       }
 
-      const marker = L.marker([v.lat, v.lng], { icon: createVehicleIcon(v) });
+      const isHighlighted = activeVehicle && v.id === activeVehicle.id;
+      const marker = L.marker([v.lat, v.lng], { icon: createVehicleIcon(v, !!isHighlighted) });
       marker.on("click", () => handleVehicleClick(v));
       marker.addTo(layer);
     });
@@ -409,8 +443,9 @@ export default function MapScreen() {
   // Sync vehicles on data/mode change
   useEffect(() => {
     selectedRouteRef.current = selectedRoute;
+    selectedVehicleRef.current = selectedVehicle;
     syncMarkers();
-  }, [vehicles, layerMode, selectedRoute, syncMarkers]);
+  }, [vehicles, layerMode, selectedRoute, selectedVehicle, syncMarkers]);
 
   // Draw shapes when data arrives or mode changes
   useEffect(() => {
