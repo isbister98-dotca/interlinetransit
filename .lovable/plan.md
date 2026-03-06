@@ -1,22 +1,16 @@
 
-# GTFS Schedule Data Integration — IMPLEMENTED
 
-## Status: ✅ Complete
+## Plan: Make `/map` the home route at `/`
 
-All phases implemented:
-1. ✅ 14 database tables created (12 GTFS data + gtfs_feeds + gtfs_sync_status) with RLS
-2. ✅ 4 initial feeds seeded (GO, UP, TTC, MiWay)
-3. ✅ 8 edge functions deployed (agency, calendar, routes, stops, trips, shapes, transfers, stop-times)
-4. ✅ Admin page at /admin/gtfs with feed management + sync status
-5. ✅ 32 cron jobs configured (28 weekly Monday 3am ET + 4 daily 3am ET for stop_times)
-6. ✅ Tested: GO agency sync returns 2 rows successfully
+The simplest approach: change the `MapScreen` route from `/map` to `/` and update all references.
 
-## Architecture
-- Per-agency function calls to avoid timeouts
-- stop_times filtered to rolling 7-day window via calendar cross-reference
-- Batched inserts (500 rows) for large files
-- gtfs_sync_status table tracks progress and errors
+### Changes
 
-## Cron Schedule
-- **Weekly (Monday 3am ET)**: agency, calendar, routes, stops, trips, shapes, transfers
-- **Daily (3am ET)**: stop_times (rolling 7 days)
+1. **`src/App.tsx`** — Change `<Route path="/map" ...>` to `<Route path="/" ...>`
+
+2. **`src/lib/types.ts`** — Update the Map tab's `path` from `"/map"` to `"/"`
+
+3. **`src/components/layout/BottomNav.tsx`** — The map tab active check uses `location.pathname.startsWith(tab.path)`. Since `"/"` would match everything, change the active logic for the `"/"` path to use exact match (`pathname === "/"`) while keeping `startsWith` for other tabs.
+
+That's it — three small edits, no content changes needed.
+
