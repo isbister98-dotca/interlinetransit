@@ -272,8 +272,11 @@ export default function MapScreen() {
     }
 
     // Draw the vehicle's route shape from cached shapes onto overlay layer
+    // GO GTFS route_ids are prefixed (e.g. "01260426-LW"), vehicle routeIds are just the suffix
     const matchingShape = shapes.find(
-      (s) => s.agency_id === vehicle.agency && s.route_id === vehicle.routeId
+      (s) => s.agency_id === vehicle.agency && (
+        s.route_id === vehicle.routeId || s.route_id.endsWith(`-${vehicle.routeId}`)
+      )
     );
     if (matchingShape && matchingShape.coords.length >= 2 && overlayLayerRef.current) {
       const color = `hsl(${AGENCY_COLORS[vehicle.agency] || "0 0% 50%"})`;
