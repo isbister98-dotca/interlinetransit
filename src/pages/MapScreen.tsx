@@ -443,8 +443,9 @@ export default function MapScreen() {
   // Sync vehicles on data/mode change
   useEffect(() => {
     selectedRouteRef.current = selectedRoute;
+    selectedVehicleRef.current = selectedVehicle;
     syncMarkers();
-  }, [vehicles, layerMode, selectedRoute, syncMarkers]);
+  }, [vehicles, layerMode, selectedRoute, selectedVehicle, syncMarkers]);
 
   // Draw shapes when data arrives or mode changes
   useEffect(() => {
