@@ -362,24 +362,34 @@ export default function MapScreen() {
     if (!layer || !map) return;
     layer.clearLayers();
 
-    if (!showLayersRef.current) return;
+    if (!showLayersRef.current && !selectedVehicleRef.current) return;
 
     const activeRoute = selectedRouteRef.current;
+    const activeVehicle = selectedVehicleRef.current;
     const zoom = map.getZoom();
 
     vehiclesRef.current.forEach((v) => {
-      // If a route is selected, only show vehicles matching both routeId AND agency
-      if (activeRoute && (v.routeId !== activeRoute.routeId || v.agency !== activeRoute.agency)) return;
+      // If a vehicle is selected, only show vehicles matching its route + agency
+      if (activeVehicle) {
+        if (v.routeId !== activeVehicle.routeId || v.agency !== activeVehicle.agency) return;
+      } else {
+        // If a route is selected, only show vehicles matching both routeId AND agency
+        if (activeRoute && (v.routeId !== activeRoute.routeId || v.agency !== activeRoute.agency)) return;
 
-      // Zoom-based priority filtering (skip when a specific route is selected)
-      if (!activeRoute) {
-        const isTrain = v.vehicleType === "train" || v.vehicleType === "subway";
-        const isTram = v.vehicleType === "tram";
-        if (zoom <= 10 && !isTrain) return;
-        if (zoom > 10 && zoom <= 12 && !isTrain && !isTram) return;
+        // Hide vehicles if layers are off
+        if (!showLayersRef.current) return;
+
+        // Zoom-based priority filtering (skip when a specific route is selected)
+        if (!activeRoute) {
+          const isTrain = v.vehicleType === "train" || v.vehicleType === "subway";
+          const isTram = v.vehicleType === "tram";
+          if (zoom <= 10 && !isTrain) return;
+          if (zoom > 10 && zoom <= 12 && !isTrain && !isTram) return;
+        }
       }
 
-      const marker = L.marker([v.lat, v.lng], { icon: createVehicleIcon(v) });
+      const isHighlighted = activeVehicle && v.id === activeVehicle.id;
+      const marker = L.marker([v.lat, v.lng], { icon: createVehicleIcon(v, !!isHighlighted) });
       marker.on("click", () => handleVehicleClick(v));
       marker.addTo(layer);
     });
