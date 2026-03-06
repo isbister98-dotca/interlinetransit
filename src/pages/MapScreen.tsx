@@ -86,9 +86,12 @@ function formatDistance(meters: number) {
   return `${(meters / 1000).toFixed(1)} km`;
 }
 
-function createVehicleIcon(vehicle: Vehicle) {
+function createVehicleIcon(vehicle: Vehicle, highlighted = false) {
   const color = AGENCY_COLORS[vehicle.agency];
   const icon = VEHICLE_ICONS[vehicle.vehicleType] ?? VEHICLE_ICONS.bus;
+  const glowStyle = highlighted
+    ? "box-shadow: 0 0 0 3px hsl(93,50%,56%), 0 2px 8px rgba(0,0,0,0.5);"
+    : "box-shadow: 0 2px 8px rgba(0,0,0,0.5);";
   return L.divIcon({
     className: "vehicle-marker",
     html: `<div style="
@@ -97,7 +100,7 @@ function createVehicleIcon(vehicle: Vehicle) {
       font-size: 10px; font-weight: 700;
       font-family: 'IBM Plex Mono', monospace;
       padding: 3px 7px 3px 5px; border-radius: 8px;
-      white-space: nowrap; box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+      white-space: nowrap; ${glowStyle}
       pointer-events: auto; cursor: pointer;
     ">${icon}<span>${vehicle.routeId}</span></div>`,
     iconSize: [50, 24],
