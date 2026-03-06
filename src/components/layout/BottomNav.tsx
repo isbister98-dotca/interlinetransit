@@ -9,7 +9,7 @@ export function BottomNav() {
     <nav className="fixed bottom-0 left-0 right-0 z-50 flex justify-center pb-[env(safe-area-inset-bottom)]">
       <div className="w-full max-w-[360px] bg-accent border border-border rounded-lg flex items-center justify-around px-1 py-2 mb-2 mx-4">
         {TAB_ITEMS.map((tab) => {
-          const isActive = location.pathname.startsWith(tab.path);
+          const isActive = tab.path === "/" ? location.pathname === "/" : location.pathname.startsWith(tab.path);
           const Icon = tab.icon;
           return (
             <NavLink

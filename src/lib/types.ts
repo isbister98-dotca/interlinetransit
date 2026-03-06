@@ -85,6 +85,6 @@ export const AGENCY_COLORS: Record<Agency, string> = {
 
 export const TAB_ITEMS = [
   { id: "journey", label: "Journey", icon: Route, path: "/journey" },
-  { id: "map", label: "Map", icon: Train, path: "/map" },
+  { id: "map", label: "Map", icon: Train, path: "/" },
   { id: "social", label: "Social", icon: Users, path: "/social" },
 ] as const;
