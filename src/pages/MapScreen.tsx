@@ -359,6 +359,15 @@ export default function MapScreen() {
     setSelectedPlace({ type: "place", osmId: "", name: shortName, subtitle: "", lat, lng, displayName });
   }, [resetSheet]);
 
+  // Helper to find matching shape for a vehicle
+  const findShapeForVehicle = useCallback((v: Vehicle) => {
+    return shapes.find(
+      (s) => s.agency_id === v.agency && (
+        s.route_id === v.routeId || s.route_id.endsWith(`-${v.routeId}`)
+      )
+    );
+  }, [shapes]);
+
   const syncMarkers = useCallback(() => {
     const layer = vehicleLayerRef.current;
     const map = mapRef.current;
@@ -391,12 +400,18 @@ export default function MapScreen() {
         }
       }
 
+      // Determine color: use route_color for qualifying routes
+      const matchingShape = findShapeForVehicle(v);
+      const colorOverride = matchingShape && shouldUseRouteColor(matchingShape)
+        ? `#${matchingShape.route_color}`
+        : undefined;
+
       const isHighlighted = activeVehicle && v.id === activeVehicle.id;
-      const marker = L.marker([v.lat, v.lng], { icon: createVehicleIcon(v, !!isHighlighted) });
+      const marker = L.marker([v.lat, v.lng], { icon: createVehicleIcon(v, !!isHighlighted, colorOverride) });
       marker.on("click", () => handleVehicleClick(v));
       marker.addTo(layer);
     });
-  }, [handleVehicleClick]);
+  }, [handleVehicleClick, findShapeForVehicle]);
 
   // Initialize map
   useEffect(() => {
