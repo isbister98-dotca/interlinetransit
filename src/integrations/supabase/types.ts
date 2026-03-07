@@ -495,7 +495,10 @@ export type Database = {
         Returns: {
           agency_id: string
           coords: Json
+          route_color: string
           route_id: string
+          route_long_name: string
+          route_type: number
         }[]
       }
     }
