@@ -7,7 +7,7 @@ import { AGENCY_COLORS, type Vehicle } from "@/lib/types";
 import { LivePill } from "@/components/transit/LivePill";
 import { DepartureRow } from "@/components/transit/DepartureRow";
 import { useVehicles } from "@/hooks/use-vehicles";
-import { useRouteShapes } from "@/hooks/use-route-shapes";
+import { useRouteShapes, shouldUseRouteColor, getRouteDisplayColor } from "@/hooks/use-route-shapes";
 import { SearchBar } from "@/components/map/SearchBar";
 import { SheetPlaceDetail } from "@/components/map/SheetPlaceDetail";
 import { SheetRouteDetail } from "@/components/map/SheetRouteDetail";
@@ -86,8 +86,8 @@ function formatDistance(meters: number) {
   return `${(meters / 1000).toFixed(1)} km`;
 }
 
-function createVehicleIcon(vehicle: Vehicle, highlighted = false) {
-  const color = AGENCY_COLORS[vehicle.agency];
+function createVehicleIcon(vehicle: Vehicle, highlighted = false, colorOverride?: string) {
+  const color = colorOverride || `hsl(${AGENCY_COLORS[vehicle.agency]})`;
   const icon = VEHICLE_ICONS[vehicle.vehicleType] ?? VEHICLE_ICONS.bus;
   const glowStyle = highlighted
     ? "box-shadow: 0 0 0 3px hsl(93,50%,56%), 0 2px 8px rgba(0,0,0,0.5);"
@@ -96,7 +96,7 @@ function createVehicleIcon(vehicle: Vehicle, highlighted = false) {
     className: "vehicle-marker",
     html: `<div style="
       display: flex; align-items: center; gap: 4px;
-      background: hsl(${color}); color: #0e0f0d;
+      background: ${color}; color: #0e0f0d;
       font-size: 10px; font-weight: 700;
       font-family: 'IBM Plex Mono', monospace;
       padding: 3px 7px 3px 5px; border-radius: 8px;
@@ -279,7 +279,7 @@ export default function MapScreen() {
       )
     );
     if (matchingShape && matchingShape.coords.length >= 2 && overlayLayerRef.current) {
-      const color = `hsl(${AGENCY_COLORS[vehicle.agency] || "0 0% 50%"})`;
+      const color = getRouteDisplayColor(matchingShape, AGENCY_COLORS);
       L.polyline(matchingShape.coords, {
         color,
         weight: 3,
@@ -359,6 +359,15 @@ export default function MapScreen() {
     setSelectedPlace({ type: "place", osmId: "", name: shortName, subtitle: "", lat, lng, displayName });
   }, [resetSheet]);
 
+  // Helper to find matching shape for a vehicle
+  const findShapeForVehicle = useCallback((v: Vehicle) => {
+    return shapes.find(
+      (s) => s.agency_id === v.agency && (
+        s.route_id === v.routeId || s.route_id.endsWith(`-${v.routeId}`)
+      )
+    );
+  }, [shapes]);
+
   const syncMarkers = useCallback(() => {
     const layer = vehicleLayerRef.current;
     const map = mapRef.current;
@@ -391,12 +400,18 @@ export default function MapScreen() {
         }
       }
 
+      // Determine color: use route_color for qualifying routes
+      const matchingShape = findShapeForVehicle(v);
+      const colorOverride = matchingShape && shouldUseRouteColor(matchingShape)
+        ? `#${matchingShape.route_color}`
+        : undefined;
+
       const isHighlighted = activeVehicle && v.id === activeVehicle.id;
-      const marker = L.marker([v.lat, v.lng], { icon: createVehicleIcon(v, !!isHighlighted) });
+      const marker = L.marker([v.lat, v.lng], { icon: createVehicleIcon(v, !!isHighlighted, colorOverride) });
       marker.on("click", () => handleVehicleClick(v));
       marker.addTo(layer);
     });
-  }, [handleVehicleClick]);
+  }, [handleVehicleClick, findShapeForVehicle]);
 
   // Initialize map
   useEffect(() => {
@@ -470,7 +485,7 @@ export default function MapScreen() {
     layer.clearLayers();
     shapes.forEach((shape) => {
       if (shape.coords.length < 2) return;
-      const color = `hsl(${AGENCY_COLORS[shape.agency_id] || "0 0% 50%"})`;
+      const color = getRouteDisplayColor(shape, AGENCY_COLORS);
       L.polyline(shape.coords, {
         color,
         weight: 2,
