@@ -279,7 +279,7 @@ export default function MapScreen() {
       )
     );
     if (matchingShape && matchingShape.coords.length >= 2 && overlayLayerRef.current) {
-      const color = `hsl(${AGENCY_COLORS[vehicle.agency] || "0 0% 50%"})`;
+      const color = getRouteDisplayColor(matchingShape, AGENCY_COLORS);
       L.polyline(matchingShape.coords, {
         color,
         weight: 3,
@@ -485,7 +485,7 @@ export default function MapScreen() {
     layer.clearLayers();
     shapes.forEach((shape) => {
       if (shape.coords.length < 2) return;
-      const color = `hsl(${AGENCY_COLORS[shape.agency_id] || "0 0% 50%"})`;
+      const color = getRouteDisplayColor(shape, AGENCY_COLORS);
       L.polyline(shape.coords, {
         color,
         weight: 2,
