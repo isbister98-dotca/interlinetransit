@@ -1,27 +1,22 @@
 
+# GTFS Schedule Data Integration — IMPLEMENTED
 
-## Plan: Add route_color and route_text_color to gtfs_routes
+## Status: ✅ Complete
 
-### 1. Database migration
-Add two nullable text columns to `gtfs_routes`:
-```sql
-ALTER TABLE public.gtfs_routes ADD COLUMN route_color text;
-ALTER TABLE public.gtfs_routes ADD COLUMN route_text_color text;
-```
+All phases implemented:
+1. ✅ 14 database tables created (12 GTFS data + gtfs_feeds + gtfs_sync_status) with RLS
+2. ✅ 4 initial feeds seeded (GO, UP, TTC, MiWay)
+3. ✅ 8 edge functions deployed (agency, calendar, routes, stops, trips, shapes, transfers, stop-times)
+4. ✅ Admin page at /admin/gtfs with feed management + sync status
+5. ✅ 32 cron jobs configured (28 weekly Monday 3am ET + 4 daily 3am ET for stop_times)
+6. ✅ Tested: GO agency sync returns 2 rows successfully
 
-### 2. Update sync function
-**`supabase/functions/gtfs-sync-routes/index.ts`** — add two fields to the mapped row object:
-```ts
-route_color: r.route_color || null,
-route_text_color: r.route_text_color || null,
-```
+## Architecture
+- Per-agency function calls to avoid timeouts
+- stop_times filtered to rolling 7-day window via calendar cross-reference
+- Batched inserts (500 rows) for large files
+- gtfs_sync_status table tracks progress and errors
 
-### 3. Re-sync
-After deploying, re-sync routes for each agency to populate the new columns with data from their `routes.txt` files.
-
-### Files
-| File | Action |
-|------|--------|
-| DB migration | Add 2 columns |
-| `supabase/functions/gtfs-sync-routes/index.ts` | Map 2 new fields |
-
+## Cron Schedule
+- **Weekly (Monday 3am ET)**: agency, calendar, routes, stops, trips, shapes, transfers
+- **Daily (3am ET)**: stop_times (rolling 7 days)
