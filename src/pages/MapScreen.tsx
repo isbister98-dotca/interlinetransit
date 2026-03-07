@@ -7,7 +7,7 @@ import { AGENCY_COLORS, type Vehicle } from "@/lib/types";
 import { LivePill } from "@/components/transit/LivePill";
 import { DepartureRow } from "@/components/transit/DepartureRow";
 import { useVehicles } from "@/hooks/use-vehicles";
-import { useRouteShapes } from "@/hooks/use-route-shapes";
+import { useRouteShapes, shouldUseRouteColor, getRouteDisplayColor } from "@/hooks/use-route-shapes";
 import { SearchBar } from "@/components/map/SearchBar";
 import { SheetPlaceDetail } from "@/components/map/SheetPlaceDetail";
 import { SheetRouteDetail } from "@/components/map/SheetRouteDetail";
@@ -86,8 +86,8 @@ function formatDistance(meters: number) {
   return `${(meters / 1000).toFixed(1)} km`;
 }
 
-function createVehicleIcon(vehicle: Vehicle, highlighted = false) {
-  const color = AGENCY_COLORS[vehicle.agency];
+function createVehicleIcon(vehicle: Vehicle, highlighted = false, colorOverride?: string) {
+  const color = colorOverride || `hsl(${AGENCY_COLORS[vehicle.agency]})`;
   const icon = VEHICLE_ICONS[vehicle.vehicleType] ?? VEHICLE_ICONS.bus;
   const glowStyle = highlighted
     ? "box-shadow: 0 0 0 3px hsl(93,50%,56%), 0 2px 8px rgba(0,0,0,0.5);"
@@ -96,7 +96,7 @@ function createVehicleIcon(vehicle: Vehicle, highlighted = false) {
     className: "vehicle-marker",
     html: `<div style="
       display: flex; align-items: center; gap: 4px;
-      background: hsl(${color}); color: #0e0f0d;
+      background: ${color}; color: #0e0f0d;
       font-size: 10px; font-weight: 700;
       font-family: 'IBM Plex Mono', monospace;
       padding: 3px 7px 3px 5px; border-radius: 8px;
