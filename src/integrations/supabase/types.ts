@@ -222,33 +222,39 @@ export type Database = {
         Row: {
           agency_id: string
           gtfs_agency_id: string | null
+          route_color: string | null
           route_desc: string | null
           route_id: string
           route_long_name: string | null
           route_short_name: string | null
           route_sort_order: number | null
+          route_text_color: string | null
           route_type: number | null
           route_url: string | null
         }
         Insert: {
           agency_id: string
           gtfs_agency_id?: string | null
+          route_color?: string | null
           route_desc?: string | null
           route_id: string
           route_long_name?: string | null
           route_short_name?: string | null
           route_sort_order?: number | null
+          route_text_color?: string | null
           route_type?: number | null
           route_url?: string | null
         }
         Update: {
           agency_id?: string
           gtfs_agency_id?: string | null
+          route_color?: string | null
           route_desc?: string | null
           route_id?: string
           route_long_name?: string | null
           route_short_name?: string | null
           route_sort_order?: number | null
+          route_text_color?: string | null
           route_type?: number | null
           route_url?: string | null
         }

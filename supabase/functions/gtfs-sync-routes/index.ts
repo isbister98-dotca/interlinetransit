@@ -75,6 +75,8 @@ Deno.serve(async (req) => {
           route_type: r.route_type ? parseInt(r.route_type) : null,
           route_url: r.route_url || null,
           route_sort_order: r.route_sort_order ? parseInt(r.route_sort_order) : null,
+          route_color: r.route_color || null,
+          route_text_color: r.route_text_color || null,
         }));
         await batchInsert(supabase, "gtfs_routes", mapped);
 
