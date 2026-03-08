@@ -7,6 +7,10 @@ interface RouteChipProps {
   agency: Agency;
   size?: "xs" | "sm" | "md" | "lg";
   className?: string;
+  /** GTFS route_color hex (without #) — overrides agency color */
+  routeColor?: string | null;
+  /** GTFS route_text_color hex (without #) — overrides default text color */
+  routeTextColor?: string | null;
 }
 
 const SIZE_STYLES = {
@@ -16,8 +20,9 @@ const SIZE_STYLES = {
   lg: "w-[52px] h-[52px] text-xl rounded-[15px]",
 } as const;
 
-export function RouteChip({ routeId, routeLabel, agency, size = "sm", className }: RouteChipProps) {
-  const color = AGENCY_COLORS[agency];
+export function RouteChip({ routeId, routeLabel, agency, size = "sm", className, routeColor, routeTextColor }: RouteChipProps) {
+  const bgColor = routeColor ? `#${routeColor}` : `hsl(${AGENCY_COLORS[agency]})`;
+  const fgColor = routeTextColor ? `#${routeTextColor}` : "#0e0f0d";
   
   // If routeLabel is provided, use pill style
   if (routeLabel) {
@@ -29,8 +34,8 @@ export function RouteChip({ routeId, routeLabel, agency, size = "sm", className 
           className
         )}
         style={{
-          backgroundColor: `hsl(${color})`,
-          color: `#0e0f0d`,
+          backgroundColor: bgColor,
+          color: fgColor,
         }}
       >
         <span>{routeId}</span>
@@ -47,8 +52,8 @@ export function RouteChip({ routeId, routeLabel, agency, size = "sm", className 
         className
       )}
       style={{
-        backgroundColor: `hsl(${color})`,
-        color: `#0e0f0d`,
+        backgroundColor: bgColor,
+        color: fgColor,
       }}
     >
       {routeId}

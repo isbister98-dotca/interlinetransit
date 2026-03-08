@@ -13,14 +13,7 @@ export interface RouteShape {
 
 /** Returns true if a route should use its own route_color instead of agency base color */
 export function shouldUseRouteColor(shape: RouteShape): boolean {
-  if (!shape.route_color) return false;
-  // route_type 1 (subway) or 2 (rail)
-  if (shape.route_type === 1 || shape.route_type === 2) return true;
-  // All GO routes
-  if (shape.agency_id === "GO") return true;
-  // TTC lines (subway lines named "Line …")
-  if (shape.agency_id === "TTC" && shape.route_long_name?.includes("Line")) return true;
-  return false;
+  return !!shape.route_color;
 }
 
 /** Resolve the display color for a route shape */

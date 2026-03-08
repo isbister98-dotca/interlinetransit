@@ -7,7 +7,7 @@ import { AGENCY_COLORS, type Vehicle } from "@/lib/types";
 import { LivePill } from "@/components/transit/LivePill";
 import { DepartureRow } from "@/components/transit/DepartureRow";
 import { useVehicles } from "@/hooks/use-vehicles";
-import { useRouteShapes, shouldUseRouteColor, getRouteDisplayColor } from "@/hooks/use-route-shapes";
+import { useRouteShapes, getRouteDisplayColor } from "@/hooks/use-route-shapes";
 import { SearchBar } from "@/components/map/SearchBar";
 import { SheetPlaceDetail } from "@/components/map/SheetPlaceDetail";
 import { SheetRouteDetail } from "@/components/map/SheetRouteDetail";
@@ -400,9 +400,9 @@ export default function MapScreen() {
         }
       }
 
-      // Determine color: use route_color for qualifying routes
+      // Determine color: use route_color when available
       const matchingShape = findShapeForVehicle(v);
-      const colorOverride = matchingShape && shouldUseRouteColor(matchingShape)
+      const colorOverride = matchingShape?.route_color
         ? `#${matchingShape.route_color}`
         : undefined;
 
@@ -483,7 +483,13 @@ export default function MapScreen() {
     if (shapes.length === 0) return;
 
     layer.clearLayers();
-    shapes.forEach((shape) => {
+    // Sort so route_type 3 (bus) draws first (below), then 0,1,2 draw on top
+    const sorted = [...shapes].sort((a, b) => {
+      const aIsRail = a.route_type != null && a.route_type !== 3 ? 1 : 0;
+      const bIsRail = b.route_type != null && b.route_type !== 3 ? 1 : 0;
+      return aIsRail - bIsRail;
+    });
+    sorted.forEach((shape) => {
       if (shape.coords.length < 2) return;
       const color = getRouteDisplayColor(shape, AGENCY_COLORS);
       L.polyline(shape.coords, {
