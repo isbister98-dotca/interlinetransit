@@ -627,6 +627,7 @@ export default function MapScreen() {
                   routeGeometry={routeGeometry}
                   routeLoading={routeLoading}
                   expanded={sheetExpanded}
+                  routeShape={findShapeForVehicle(selectedVehicle) ?? null}
                 />
               )}
             </div>

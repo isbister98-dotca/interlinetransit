@@ -4,6 +4,7 @@ import { OccupancyBar } from "@/components/transit/OccupancyBar";
 import { StatusPill } from "@/components/transit/StatusPill";
 import type { Vehicle } from "@/lib/types";
 import type { RouteGeometry } from "@/lib/osm-api";
+import type { RouteShape } from "@/hooks/use-route-shapes";
 import { AGENCY_COLORS } from "@/lib/types";
 
 interface SheetVehicleDetailProps {
@@ -12,6 +13,7 @@ interface SheetVehicleDetailProps {
   routeGeometry: RouteGeometry | null;
   routeLoading: boolean;
   expanded: boolean;
+  routeShape: RouteShape | null;
 }
 
 function bearingToDirection(bearing: number): string {
