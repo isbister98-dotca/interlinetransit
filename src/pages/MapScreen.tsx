@@ -514,12 +514,14 @@ export default function MapScreen() {
 
     map.on("click", (e: L.LeafletMouseEvent) => handleMapClick(e));
     map.on("zoomend", () => { syncMarkers(); syncStops(); });
+    map.on("moveend", () => { syncStops(); });
 
     // Fix tile loading by ensuring map knows its container size
     requestAnimationFrame(() => map.invalidateSize());
     const resizeTimer = setTimeout(() => map.invalidateSize(), 300);
 
     syncMarkers();
+    syncStops();
 
     return () => {
       clearTimeout(resizeTimer);
