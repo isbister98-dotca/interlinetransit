@@ -445,7 +445,7 @@ export default function MapScreen() {
     });
   }, [handleVehicleClick, findShapeForVehicle]);
 
-  // Sync GTFS stops on map (zoom-filtered)
+  // Sync GTFS stops on map (zoom-filtered, bounds-clipped)
   const syncStops = useCallback(() => {
     const layer = stopsLayerRef.current;
     const map = mapRef.current;
@@ -455,14 +455,10 @@ export default function MapScreen() {
 
     if (zoom < STOP_MIN_ZOOM) {
       layer.clearLayers();
-      stopsDrawnZoom.current = null;
       return;
     }
 
-    // Only redraw if zoom changed
-    if (stopsDrawnZoom.current === zoom) return;
     layer.clearLayers();
-    stopsDrawnZoom.current = zoom;
 
     // Get visible bounds and only add stops within view
     const bounds = map.getBounds();
