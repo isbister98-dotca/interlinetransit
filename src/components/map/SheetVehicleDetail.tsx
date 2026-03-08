@@ -45,11 +45,9 @@ export function SheetVehicleDetail({ vehicle, onTrack, routeGeometry, routeLoadi
   const destination = stops.length > 0 ? stops[stops.length - 1].name : bearingToDirection(vehicle.bearing);
 
   // Build display label: prefer destination, fallback to route_long_name
-  const displayLabel = stops.length > 0
-    ? `${vehicle.routeId} → ${stops[stops.length - 1].name}`
-    : routeShape?.route_long_name
-      ? `${vehicle.routeId} · ${routeShape.route_long_name}`
-      : vehicle.routeLabel;
+  const displayLabel = routeShape?.route_long_name
+    ? `${vehicle.routeId} · ${routeShape.route_long_name}`
+    : vehicle.routeLabel;
 
   return (
     <div className="animate-slide-up">
