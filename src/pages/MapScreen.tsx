@@ -8,10 +8,12 @@ import { LivePill } from "@/components/transit/LivePill";
 import { DepartureRow } from "@/components/transit/DepartureRow";
 import { useVehicles } from "@/hooks/use-vehicles";
 import { useRouteShapes, getRouteDisplayColor } from "@/hooks/use-route-shapes";
+import { useStops, type GtfsStop } from "@/hooks/use-stops";
 import { SearchBar } from "@/components/map/SearchBar";
 import { SheetPlaceDetail } from "@/components/map/SheetPlaceDetail";
 import { SheetRouteDetail } from "@/components/map/SheetRouteDetail";
 import { SheetStationDetail } from "@/components/map/SheetStationDetail";
+import { SheetStopDetail } from "@/components/map/SheetStopDetail";
 import { SheetVehicleDetail } from "@/components/map/SheetVehicleDetail";
 import {
   type SearchResult,
@@ -143,8 +145,11 @@ function createStopIcon() {
   });
 }
 
-type SheetMode = "nearby" | "place" | "route" | "station" | "vehicle" | "hidden";
+type SheetMode = "nearby" | "place" | "route" | "station" | "vehicle" | "stop" | "hidden";
 type LayerMode = "routes" | "vehicles" | "everything" | "off";
+
+const DEFAULT_ZOOM = 14;
+const STOP_MIN_ZOOM = 14; // Only show stops at this zoom or more
 
 export default function MapScreen() {
   const [layerMode, setLayerMode] = useState<LayerMode>("vehicles");
@@ -166,16 +171,19 @@ export default function MapScreen() {
 
   const [selectedStation, setSelectedStation] = useState<StationResult | null>(null);
   const [selectedVehicle, setSelectedVehicle] = useState<Vehicle | null>(null);
+  const [selectedStop, setSelectedStop] = useState<GtfsStop | null>(null);
 
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
   const vehicleLayerRef = useRef<L.LayerGroup | null>(null);
   const shapesLayerRef = useRef<L.LayerGroup | null>(null);
   const overlayLayerRef = useRef<L.LayerGroup | null>(null);
+  const stopsLayerRef = useRef<L.LayerGroup | null>(null);
   const vehiclesRef = useRef<Vehicle[]>([]);
   const layerModeRef = useRef<LayerMode>("vehicles");
   const showLayersRef = useRef(true);
   const shapesDrawnRef = useRef(false);
+  const stopsDrawnZoom = useRef<number | null>(null);
   const selectedRouteRef = useRef<RouteResult | null>(null);
   const selectedVehicleRef = useRef<Vehicle | null>(null);
   const destinationMarkerRef = useRef<L.Marker | null>(null);
@@ -183,6 +191,7 @@ export default function MapScreen() {
 
   const { vehicles } = useVehicles();
   const { shapes } = useRouteShapes();
+  const { stops: gtfsStops } = useStops();
   vehiclesRef.current = vehicles;
   layerModeRef.current = layerMode;
   showLayersRef.current = layerMode === "vehicles" || layerMode === "everything";
@@ -205,6 +214,7 @@ export default function MapScreen() {
     setSelectedRoute(null);
     setSelectedStation(null);
     setSelectedVehicle(null);
+    setSelectedStop(null);
     setPlaceDistance(undefined);
     setPlaceDuration(undefined);
     setRouteGeometry(null);
