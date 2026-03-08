@@ -192,7 +192,7 @@ export default function MapScreen() {
   const layerModeRef = useRef<LayerMode>("vehicles");
   const showLayersRef = useRef(true);
   const shapesDrawnRef = useRef(false);
-  const stopsDrawnZoom = useRef<number | null>(null);
+  
   const selectedRouteRef = useRef<RouteResult | null>(null);
   const selectedVehicleRef = useRef<Vehicle | null>(null);
   const destinationMarkerRef = useRef<L.Marker | null>(null);
@@ -533,7 +533,6 @@ export default function MapScreen() {
   // Re-sync stops when data loads
   useEffect(() => {
     if (gtfsStops.length > 0) {
-      stopsDrawnZoom.current = null; // force redraw
       syncStops();
     }
   }, [gtfsStops, syncStops]);
