@@ -145,6 +145,15 @@ function createStopIcon() {
   });
 }
 
+function createGtfsStopIcon() {
+  return L.divIcon({
+    className: "gtfs-stop-marker",
+    html: `<div style="width:10px;height:10px;border-radius:50%;background:hsl(var(--foreground)/0.7);border:2px solid hsl(var(--background));box-shadow:0 1px 3px rgba(0,0,0,0.4);cursor:pointer;pointer-events:auto;"></div>`,
+    iconSize: [10, 10],
+    iconAnchor: [5, 5],
+  });
+}
+
 type SheetMode = "nearby" | "place" | "route" | "station" | "vehicle" | "stop" | "hidden";
 type LayerMode = "routes" | "vehicles" | "everything" | "off";
 
@@ -305,6 +314,19 @@ export default function MapScreen() {
     setRouteLoading(false);
   }, [clearOverlays, shapes]);
 
+  // Handle stop marker click
+  const handleStopClick = useCallback((stop: GtfsStop) => {
+    clearOverlays();
+    setSelectedStop(stop);
+    setSheetMode("stop");
+    setSheetExpanded(true);
+
+    const map = mapRef.current;
+    if (map) {
+      map.flyTo([stop.stop_lat, stop.stop_lon], Math.max(map.getZoom(), 15), { duration: 0.8 });
+    }
+  }, [clearOverlays]);
+
   // Get directions for place
   const handleGetDirections = useCallback(async () => {
     if (!selectedPlace || !mapRef.current) return;
@@ -432,7 +454,7 @@ export default function MapScreen() {
 
     const map = L.map(container, {
       center: userLocation,
-      zoom: 13,
+      zoom: DEFAULT_ZOOM,
       zoomControl: false,
       attributionControl: false,
     });
@@ -443,14 +465,16 @@ export default function MapScreen() {
 
     const vehicleLayer = L.layerGroup().addTo(map);
     const shapesLayer = L.layerGroup().addTo(map);
+    const stopsLayer = L.layerGroup().addTo(map);
     const overlayLayer = L.layerGroup().addTo(map);
     mapRef.current = map;
     vehicleLayerRef.current = vehicleLayer;
     shapesLayerRef.current = shapesLayer;
+    stopsLayerRef.current = stopsLayer;
     overlayLayerRef.current = overlayLayer;
 
     map.on("click", (e: L.LeafletMouseEvent) => handleMapClick(e));
-    map.on("zoomend", () => syncMarkers());
+    map.on("zoomend", () => { syncMarkers(); syncStops(); });
 
     // Fix tile loading by ensuring map knows its container size
     requestAnimationFrame(() => map.invalidateSize());
@@ -464,6 +488,7 @@ export default function MapScreen() {
       mapRef.current = null;
       vehicleLayerRef.current = null;
       shapesLayerRef.current = null;
+      stopsLayerRef.current = null;
       overlayLayerRef.current = null;
     };
   }, [syncMarkers, handleMapClick]);
