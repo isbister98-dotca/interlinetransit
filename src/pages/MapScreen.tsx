@@ -532,7 +532,15 @@ export default function MapScreen() {
       stopsLayerRef.current = null;
       overlayLayerRef.current = null;
     };
-  }, [syncMarkers, handleMapClick]);
+  }, [syncMarkers, syncStops, handleMapClick]);
+
+  // Re-sync stops when data loads
+  useEffect(() => {
+    if (gtfsStops.length > 0) {
+      stopsDrawnZoom.current = null; // force redraw
+      syncStops();
+    }
+  }, [gtfsStops, syncStops]);
 
   // Sync vehicles on data/mode change
   useEffect(() => {
@@ -705,6 +713,11 @@ export default function MapScreen() {
                   expanded={sheetExpanded}
                   routeShape={findShapeForVehicle(selectedVehicle) ?? null}
                 />
+              )}
+
+              {/* Stop detail */}
+              {sheetMode === "stop" && selectedStop && (
+                <SheetStopDetail stop={selectedStop} />
               )}
             </div>
           </>
