@@ -4,6 +4,7 @@ import { OccupancyBar } from "@/components/transit/OccupancyBar";
 import { StatusPill } from "@/components/transit/StatusPill";
 import type { Vehicle } from "@/lib/types";
 import type { RouteGeometry } from "@/lib/osm-api";
+import type { RouteShape } from "@/hooks/use-route-shapes";
 import { AGENCY_COLORS } from "@/lib/types";
 
 interface SheetVehicleDetailProps {
@@ -12,6 +13,7 @@ interface SheetVehicleDetailProps {
   routeGeometry: RouteGeometry | null;
   routeLoading: boolean;
   expanded: boolean;
+  routeShape: RouteShape | null;
 }
 
 function bearingToDirection(bearing: number): string {
@@ -33,7 +35,7 @@ function findNearestStopIndex(vehicle: Vehicle, stops: { lat: number; lng: numbe
   return minIdx;
 }
 
-export function SheetVehicleDetail({ vehicle, onTrack, routeGeometry, routeLoading, expanded }: SheetVehicleDetailProps) {
+export function SheetVehicleDetail({ vehicle, onTrack, routeGeometry, routeLoading, expanded, routeShape }: SheetVehicleDetailProps) {
   const isOnTime = (vehicle.speed || 0) > 10;
   const agencyColor = AGENCY_COLORS[vehicle.agency];
   const speedDisplay = vehicle.speed != null ? `${vehicle.speed} km/h` : "N/A";
@@ -42,13 +44,24 @@ export function SheetVehicleDetail({ vehicle, onTrack, routeGeometry, routeLoadi
   const vehicleStopIdx = findNearestStopIndex(vehicle, stops);
   const destination = stops.length > 0 ? stops[stops.length - 1].name : bearingToDirection(vehicle.bearing);
 
+  // Build display label: prefer destination, fallback to route_long_name
+  const displayLabel = stops.length > 0
+    ? `${vehicle.routeId} → ${stops[stops.length - 1].name}`
+    : routeShape?.route_long_name
+      ? `${vehicle.routeId} · ${routeShape.route_long_name}`
+      : vehicle.routeLabel;
+
   return (
     <div className="animate-slide-up">
       {/* Header */}
       <div className="flex items-center gap-3 mb-3">
-        <RouteChip routeId={vehicle.routeId} agency={vehicle.agency} />
+        <RouteChip
+          routeId={vehicle.routeId}
+          agency={vehicle.agency}
+          routeColor={routeShape?.route_color}
+        />
         <div className="flex-1 min-w-0">
-          <h3 className="text-sm font-bold text-foreground truncate">{vehicle.routeLabel}</h3>
+          <h3 className="text-sm font-bold text-foreground truncate">{displayLabel}</h3>
           <p className="text-[10px] text-muted-foreground">{vehicle.agency} · {vehicle.vehicleType}</p>
         </div>
         <StatusPill status={isOnTime ? "on-time" : "delayed"} delayMinutes={isOnTime ? undefined : 3} />
