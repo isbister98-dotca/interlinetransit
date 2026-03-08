@@ -8,10 +8,12 @@ import { LivePill } from "@/components/transit/LivePill";
 import { DepartureRow } from "@/components/transit/DepartureRow";
 import { useVehicles } from "@/hooks/use-vehicles";
 import { useRouteShapes, getRouteDisplayColor } from "@/hooks/use-route-shapes";
+import { useStops, type GtfsStop } from "@/hooks/use-stops";
 import { SearchBar } from "@/components/map/SearchBar";
 import { SheetPlaceDetail } from "@/components/map/SheetPlaceDetail";
 import { SheetRouteDetail } from "@/components/map/SheetRouteDetail";
 import { SheetStationDetail } from "@/components/map/SheetStationDetail";
+import { SheetStopDetail } from "@/components/map/SheetStopDetail";
 import { SheetVehicleDetail } from "@/components/map/SheetVehicleDetail";
 import {
   type SearchResult,
@@ -143,8 +145,20 @@ function createStopIcon() {
   });
 }
 
-type SheetMode = "nearby" | "place" | "route" | "station" | "vehicle" | "hidden";
+function createGtfsStopIcon() {
+  return L.divIcon({
+    className: "gtfs-stop-marker",
+    html: `<div style="width:10px;height:10px;border-radius:50%;background:hsl(var(--foreground)/0.7);border:2px solid hsl(var(--background));box-shadow:0 1px 3px rgba(0,0,0,0.4);cursor:pointer;pointer-events:auto;"></div>`,
+    iconSize: [10, 10],
+    iconAnchor: [5, 5],
+  });
+}
+
+type SheetMode = "nearby" | "place" | "route" | "station" | "vehicle" | "stop" | "hidden";
 type LayerMode = "routes" | "vehicles" | "everything" | "off";
+
+const DEFAULT_ZOOM = 14;
+const STOP_MIN_ZOOM = 14; // Only show stops at this zoom or more
 
 export default function MapScreen() {
   const [layerMode, setLayerMode] = useState<LayerMode>("vehicles");
@@ -166,16 +180,19 @@ export default function MapScreen() {
 
   const [selectedStation, setSelectedStation] = useState<StationResult | null>(null);
   const [selectedVehicle, setSelectedVehicle] = useState<Vehicle | null>(null);
+  const [selectedStop, setSelectedStop] = useState<GtfsStop | null>(null);
 
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
   const vehicleLayerRef = useRef<L.LayerGroup | null>(null);
   const shapesLayerRef = useRef<L.LayerGroup | null>(null);
   const overlayLayerRef = useRef<L.LayerGroup | null>(null);
+  const stopsLayerRef = useRef<L.LayerGroup | null>(null);
   const vehiclesRef = useRef<Vehicle[]>([]);
   const layerModeRef = useRef<LayerMode>("vehicles");
   const showLayersRef = useRef(true);
   const shapesDrawnRef = useRef(false);
+  
   const selectedRouteRef = useRef<RouteResult | null>(null);
   const selectedVehicleRef = useRef<Vehicle | null>(null);
   const destinationMarkerRef = useRef<L.Marker | null>(null);
@@ -183,6 +200,7 @@ export default function MapScreen() {
 
   const { vehicles } = useVehicles();
   const { shapes } = useRouteShapes();
+  const { stops: gtfsStops } = useStops();
   vehiclesRef.current = vehicles;
   layerModeRef.current = layerMode;
   showLayersRef.current = layerMode === "vehicles" || layerMode === "everything";
@@ -205,6 +223,7 @@ export default function MapScreen() {
     setSelectedRoute(null);
     setSelectedStation(null);
     setSelectedVehicle(null);
+    setSelectedStop(null);
     setPlaceDistance(undefined);
     setPlaceDuration(undefined);
     setRouteGeometry(null);
@@ -294,6 +313,19 @@ export default function MapScreen() {
     setRouteGeometry(geo);
     setRouteLoading(false);
   }, [clearOverlays, shapes]);
+
+  // Handle stop marker click
+  const handleStopClick = useCallback((stop: GtfsStop) => {
+    clearOverlays();
+    setSelectedStop(stop);
+    setSheetMode("stop");
+    setSheetExpanded(true);
+
+    const map = mapRef.current;
+    if (map) {
+      map.flyTo([stop.stop_lat, stop.stop_lon], Math.max(map.getZoom(), 15), { duration: 0.8 });
+    }
+  }, [clearOverlays]);
 
   // Get directions for place
   const handleGetDirections = useCallback(async () => {
@@ -413,7 +445,42 @@ export default function MapScreen() {
     });
   }, [handleVehicleClick, findShapeForVehicle]);
 
-  // Initialize map
+  // Sync GTFS stops on map (zoom-filtered, bounds-clipped)
+  const syncStops = useCallback(() => {
+    const layer = stopsLayerRef.current;
+    const map = mapRef.current;
+    if (!layer || !map) return;
+
+    const zoom = map.getZoom();
+
+    if (zoom < STOP_MIN_ZOOM) {
+      layer.clearLayers();
+      return;
+    }
+
+    layer.clearLayers();
+
+    // Get visible bounds and only add stops within view
+    const bounds = map.getBounds();
+    const icon = createGtfsStopIcon();
+
+    gtfsStops.forEach((stop) => {
+      if (!bounds.contains([stop.stop_lat, stop.stop_lon])) return;
+      const marker = L.marker([stop.stop_lat, stop.stop_lon], { icon, interactive: true });
+      marker.on("click", (e: L.LeafletMouseEvent) => {
+        L.DomEvent.stopPropagation(e);
+        handleStopClick(stop);
+      });
+      marker.bindTooltip(stop.stop_name || "Stop", {
+        className: "dark-popup",
+        direction: "top",
+        offset: [0, -6],
+      });
+      marker.addTo(layer);
+    });
+  }, [gtfsStops, handleStopClick]);
+
+
   useEffect(() => {
     if (!mapContainerRef.current || mapRef.current) return;
 
@@ -422,7 +489,7 @@ export default function MapScreen() {
 
     const map = L.map(container, {
       center: userLocation,
-      zoom: 13,
+      zoom: DEFAULT_ZOOM,
       zoomControl: false,
       attributionControl: false,
     });
@@ -433,20 +500,24 @@ export default function MapScreen() {
 
     const vehicleLayer = L.layerGroup().addTo(map);
     const shapesLayer = L.layerGroup().addTo(map);
+    const stopsLayer = L.layerGroup().addTo(map);
     const overlayLayer = L.layerGroup().addTo(map);
     mapRef.current = map;
     vehicleLayerRef.current = vehicleLayer;
     shapesLayerRef.current = shapesLayer;
+    stopsLayerRef.current = stopsLayer;
     overlayLayerRef.current = overlayLayer;
 
     map.on("click", (e: L.LeafletMouseEvent) => handleMapClick(e));
-    map.on("zoomend", () => syncMarkers());
+    map.on("zoomend", () => { syncMarkers(); syncStops(); });
+    map.on("moveend", () => { syncStops(); });
 
     // Fix tile loading by ensuring map knows its container size
     requestAnimationFrame(() => map.invalidateSize());
     const resizeTimer = setTimeout(() => map.invalidateSize(), 300);
 
     syncMarkers();
+    syncStops();
 
     return () => {
       clearTimeout(resizeTimer);
@@ -454,9 +525,17 @@ export default function MapScreen() {
       mapRef.current = null;
       vehicleLayerRef.current = null;
       shapesLayerRef.current = null;
+      stopsLayerRef.current = null;
       overlayLayerRef.current = null;
     };
-  }, [syncMarkers, handleMapClick]);
+  }, [syncMarkers, syncStops, handleMapClick]);
+
+  // Re-sync stops when data loads
+  useEffect(() => {
+    if (gtfsStops.length > 0) {
+      syncStops();
+    }
+  }, [gtfsStops, syncStops]);
 
   // Sync vehicles on data/mode change
   useEffect(() => {
@@ -629,6 +708,11 @@ export default function MapScreen() {
                   expanded={sheetExpanded}
                   routeShape={findShapeForVehicle(selectedVehicle) ?? null}
                 />
+              )}
+
+              {/* Stop detail */}
+              {sheetMode === "stop" && selectedStop && (
+                <SheetStopDetail stop={selectedStop} />
               )}
             </div>
           </>
