@@ -110,12 +110,7 @@ export interface StopDepartureData {
 
 async function fetchStopDepartures(key: string): Promise<StopDepartureData> {
   const [, stopId, agencyId] = key.split("|");
-  const { data, error } = await supabase.functions.invoke("stop-departures", {
-    body: null,
-    headers: {},
-  });
 
-  // Use query params via direct URL construction
   const projectId = import.meta.env.VITE_SUPABASE_PROJECT_ID;
   const anonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
   const url = `https://${projectId}.supabase.co/functions/v1/stop-departures?stop_id=${encodeURIComponent(stopId)}&agency_id=${encodeURIComponent(agencyId)}&limit=15`;
