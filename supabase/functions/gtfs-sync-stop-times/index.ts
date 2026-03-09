@@ -7,21 +7,21 @@ const corsHeaders = {
 };
 
 const PAGE_SIZE = 50000;
-const CSV_DECODE_CHUNK_BYTES = 256 * 1024;
+const CSV_DECODE_CHUNK_BYTES = 64 * 1024;
 
 async function getActiveServiceIds(supabase: any, agencyId: string): Promise<Set<string>> {
   const now = new Date();
   const serviceIds = new Set<string>();
   const dayNames = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
   const days: { dateStr: string; dayIdx: number }[] = [];
-  for (let i = 0; i < 7; i++) {
+  for (let i = 0; i < 14; i++) {
     const d = new Date(now);
     d.setDate(d.getDate() + i);
     days.push({ dateStr: d.toISOString().slice(0, 10).replace(/-/g, ""), dayIdx: d.getDay() });
   }
   const { data: calendars } = await supabase
     .from("gtfs_calendar").select("*").eq("agency_id", agencyId)
-    .lte("start_date", days[6].dateStr).gte("end_date", days[0].dateStr);
+    .lte("start_date", days[13].dateStr).gte("end_date", days[0].dateStr);
   for (const cal of calendars || []) {
     for (const day of days) {
       if (cal.start_date <= day.dateStr && cal.end_date >= day.dateStr && cal[dayNames[day.dayIdx]])
@@ -275,9 +275,15 @@ Deno.serve(async (req) => {
             timepoint: idxTimepoint >= 0 && vals[idxTimepoint]?.trim() ? parseInt(vals[idxTimepoint].trim()) : null,
           });
 
-          if (batch.length >= 2000) {
-            const { error } = await supabase.from("gtfs_stop_times").upsert(batch, { onConflict: "agency_id,trip_id,stop_sequence" });
-            if (error) throw error;
+          if (batch.length >= 500) {
+            let attempt = 0;
+            while (attempt < 3) {
+              const { error } = await supabase.from("gtfs_stop_times").upsert(batch, { onConflict: "agency_id,trip_id,stop_sequence" });
+              if (!error) break;
+              attempt++;
+              if (attempt >= 3) throw error;
+              await new Promise(r => setTimeout(r, 1000));
+            }
             totalRows += batch.length;
             batch = [];
           }
@@ -288,8 +294,14 @@ Deno.serve(async (req) => {
         if (!headerParsed) throw new Error("stop_times.txt is empty");
 
         if (batch.length > 0) {
-          const { error } = await supabase.from("gtfs_stop_times").upsert(batch, { onConflict: "agency_id,trip_id,stop_sequence" });
-          if (error) throw error;
+          let attempt = 0;
+          while (attempt < 3) {
+            const { error } = await supabase.from("gtfs_stop_times").upsert(batch, { onConflict: "agency_id,trip_id,stop_sequence" });
+            if (!error) break;
+            attempt++;
+            if (attempt >= 3) throw error;
+            await new Promise(r => setTimeout(r, 1000));
+          }
           totalRows += batch.length;
         }
 
