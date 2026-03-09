@@ -11,7 +11,7 @@ const PAGE_SIZE = 30000;
 const BATCH_SIZE = 500;
 
 /**
- * Get active service IDs for the next 14 days based on calendar and exceptions
+ * Get active service IDs for the next 7 days based on calendar and exceptions
  */
 async function getActiveServiceIds(supabase: any, agencyId: string): Promise<Set<string>> {
   const now = new Date();
@@ -19,7 +19,7 @@ async function getActiveServiceIds(supabase: any, agencyId: string): Promise<Set
   const dayNames = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
   const days: { dateStr: string; dayIdx: number }[] = [];
   
-  for (let i = 0; i < 14; i++) {
+  for (let i = 0; i < 7; i++) {
     const d = new Date(now);
     d.setDate(d.getDate() + i);
     days.push({ dateStr: d.toISOString().slice(0, 10).replace(/-/g, ""), dayIdx: d.getDay() });
@@ -27,7 +27,7 @@ async function getActiveServiceIds(supabase: any, agencyId: string): Promise<Set
   
   const { data: calendars } = await supabase
     .from("gtfs_calendar").select("*").eq("agency_id", agencyId)
-    .lte("start_date", days[13].dateStr).gte("end_date", days[0].dateStr);
+    .lte("start_date", days[6].dateStr).gte("end_date", days[0].dateStr);
     
   for (const cal of calendars || []) {
     for (const day of days) {
@@ -106,7 +106,7 @@ function parseCsvLine(line: string): string[] {
  */
 async function streamProcessZip(
   feedUrl: string,
-  onLine: (line: string) => void
+  onLine: (line: string) => boolean | void
 ): Promise<void> {
   const response = await fetch(feedUrl);
   if (!response.ok) throw new Error(`Download failed: ${response.status}`);
@@ -136,13 +136,20 @@ async function streamProcessZip(
             let nlIndex = lineBuffer.indexOf("\n");
             while (nlIndex >= 0) {
               const line = lineBuffer.slice(0, nlIndex).replace(/\r/g, "").trim();
-              if (line) onLine(line);
+              if (line) {
+                const shouldContinue = onLine(line);
+                if (shouldContinue === false) {
+                  stopTimesComplete = true;
+                  resolve();
+                  return;
+                }
+              }
               lineBuffer = lineBuffer.slice(nlIndex + 1);
               nlIndex = lineBuffer.indexOf("\n");
             }
           }
           
-          if (final) {
+          if (final && !stopTimesComplete) {
             // Process any remaining content
             const finalLine = lineBuffer.replace(/\r/g, "").trim();
             if (finalLine) onLine(finalLine);
@@ -165,7 +172,9 @@ async function streamProcessZip(
           const { done, value } = await reader.read();
           
           if (done) {
-            unzip.push(new Uint8Array(0), true);
+            if (!stopTimesComplete) {
+              unzip.push(new Uint8Array(0), true);
+            }
             if (!foundStopTimes) {
               reject(new Error("stop_times.txt not found in zip"));
             }
@@ -175,6 +184,10 @@ async function streamProcessZip(
           if (value) {
             unzip.push(value);
           }
+        }
+        
+        if (stopTimesComplete) {
+          await reader.cancel(); // Abort network stream
         }
       } catch (e) {
         reject(e);
@@ -276,7 +289,7 @@ Deno.serve(async (req) => {
       }
 
       try {
-        // Get active services and trips for the next 14 days
+        // Get active services and trips for the next 7 days
         const serviceIds = await getActiveServiceIds(supabase, agencyId);
         if (serviceIds.size === 0) {
           await supabase.from("gtfs_sync_status").upsert({
@@ -285,7 +298,7 @@ Deno.serve(async (req) => {
             status: "done",
             row_count: 0,
             completed_at: new Date().toISOString(),
-            error_msg: "No active services found for next 14 days",
+            error_msg: "No active services found for next 7 days",
           }, { onConflict: "agency_id,file_type" });
           results[agencyId] = { ok: true, rows: 0, note: "No active services" };
           continue;
@@ -299,7 +312,7 @@ Deno.serve(async (req) => {
             status: "done",
             row_count: 0,
             completed_at: new Date().toISOString(),
-            error_msg: "No active trips found for next 14 days",
+            error_msg: "No active trips found for next 7 days",
           }, { onConflict: "agency_id,file_type" });
           results[agencyId] = { ok: true, rows: 0, note: "No active trips" };
           continue;
@@ -325,7 +338,7 @@ Deno.serve(async (req) => {
 
         // Stream process the ZIP file
         await streamProcessZip(feed.feed_url, (line: string) => {
-          if (hasMore) return; // Stop processing if we've hit the page limit
+          if (hasMore) return false; // Stop processing if we've hit the page limit
           
           if (!headerParsed) {
             const headers = parseCsvLine(line.replace(/^\uFEFF/, "")).map(h => h.trim());
@@ -360,7 +373,7 @@ Deno.serve(async (req) => {
           // Check if we've processed enough for this page
           if (processedInPage >= PAGE_SIZE) {
             hasMore = true;
-            return;
+            return false;
           }
 
           processedInPage++;
