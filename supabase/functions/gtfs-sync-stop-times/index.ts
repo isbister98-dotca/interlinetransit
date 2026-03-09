@@ -361,6 +361,8 @@ Deno.serve(async (req) => {
             pickup_type: idxPickup >= 0 && vals[idxPickup]?.trim() ? parseInt(vals[idxPickup].trim()) : null,
             drop_off_type: idxDropoff >= 0 && vals[idxDropoff]?.trim() ? parseInt(vals[idxDropoff].trim()) : null,
             timepoint: idxTimepoint >= 0 && vals[idxTimepoint]?.trim() ? parseInt(vals[idxTimepoint].trim()) : null,
+            stop_headsign: idxStopHeadsign >= 0 ? (vals[idxStopHeadsign]?.trim() || null) : null,
+            shape_dist_traveled: idxShapeDist >= 0 && vals[idxShapeDist]?.trim() ? parseFloat(vals[idxShapeDist].trim()) : null,
           });
         });
 
