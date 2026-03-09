@@ -6,7 +6,7 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
-import { ArrowLeft, Plus, Trash2, RefreshCw, Loader2, ChevronDown, ChevronRight, AlertTriangle } from "lucide-react";
+import { ArrowLeft, Plus, Trash2, RefreshCw, Loader2, ChevronDown, ChevronRight, AlertTriangle, CheckCircle2, Clock, XCircle } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 const SYNC_FUNCTIONS = [
@@ -485,6 +485,86 @@ export default function AdminGtfsScreen() {
           </Card>
         ))}
       </div>
+
+      {/* Sync Health Dashboard */}
+      {allAgenciesInStatus.length > 0 && (
+        <div className="space-y-3 mb-8">
+          <h2 className="text-sm font-medium text-muted-foreground">Sync Health</h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {allAgenciesInStatus.map(agencyId => {
+              const statuses = getAgencyStatuses(agencyId);
+              const doneStatuses = statuses.filter(s => s.status === "done" && s.completed_at);
+              const lastDone = doneStatuses.length > 0
+                ? doneStatuses.sort((a, b) => new Date(b.completed_at!).getTime() - new Date(a.completed_at!).getTime())[0]
+                : null;
+              const hasErrors = statuses.some(s => s.status === "error");
+              const hasStale = statuses.some(s => isStaleRunning(s.status, s.started_at));
+              const isRunning = statuses.some(s => s.status === "running" && !isStaleRunning(s.status, s.started_at));
+              const totalRows = statuses.reduce((acc, s) => acc + (s.row_count || 0), 0);
+
+              const stopTimesDone = statuses.filter(s => s.file_type.startsWith("stop_times_d") && s.status === "done");
+              const stopTimesTotal = DAY_OFFSETS.length;
+
+              const timeSinceSync = lastDone?.completed_at
+                ? Date.now() - new Date(lastDone.completed_at).getTime()
+                : null;
+              const hoursAgo = timeSinceSync ? Math.round(timeSinceSync / 3600000) : null;
+              const isStaleSync = hoursAgo !== null && hoursAgo > 26; // >26h means missed daily sync
+
+              let borderColor = "border-border";
+              let Icon = CheckCircle2;
+              let iconColor = "text-success";
+              if (hasErrors) { borderColor = "border-destructive/40"; Icon = XCircle; iconColor = "text-destructive"; }
+              else if (hasStale) { borderColor = "border-warning/40"; Icon = AlertTriangle; iconColor = "text-warning"; }
+              else if (isStaleSync) { borderColor = "border-warning/40"; Icon = Clock; iconColor = "text-warning"; }
+              else if (isRunning) { borderColor = "border-info/40"; Icon = Loader2; iconColor = "text-info"; }
+
+              return (
+                <Card key={agencyId} className={`p-3 bg-card ${borderColor}`}>
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <Icon className={`h-4 w-4 ${iconColor} ${isRunning && !hasErrors && !hasStale ? "animate-spin" : ""}`} />
+                      <span className="font-semibold text-foreground">{agencyId}</span>
+                    </div>
+                    <span className="text-xs text-muted-foreground tabular-nums">
+                      {totalRows.toLocaleString()} rows
+                    </span>
+                  </div>
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-muted-foreground">Last sync</span>
+                      <span className={isStaleSync ? "text-warning font-medium" : "text-foreground"}>
+                        {lastDone?.completed_at
+                          ? `${hoursAgo! < 1 ? "< 1h" : `${hoursAgo}h`} ago`
+                          : "Never"}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-muted-foreground">Stop times</span>
+                      <span className="text-foreground">
+                        {stopTimesDone.length}/{stopTimesTotal} days synced
+                      </span>
+                    </div>
+                    {hasErrors && (
+                      <p className="text-xs text-destructive">
+                        {statuses.filter(s => s.status === "error").length} error(s)
+                      </p>
+                    )}
+                    {hasStale && (
+                      <p className="text-xs text-warning">
+                        {statuses.filter(s => isStaleRunning(s.status, s.started_at)).length} stale sync(s)
+                      </p>
+                    )}
+                    {isStaleSync && !hasErrors && !hasStale && (
+                      <p className="text-xs text-warning">Missed daily sync window</p>
+                    )}
+                  </div>
+                </Card>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Sync Status */}
       <div className="space-y-3">
