@@ -8,10 +8,11 @@ const corsHeaders = {
 
 // Agency-specific page sizes to handle large feeds
 const AGENCY_PAGE_SIZES: Record<string, number> = {
-  TTC: 5000,    // TTC has ~1.2M stop_times, use smaller pages
+  TTC: 3000,    // TTC has ~1.2M stop_times, use smaller pages
   MiWay: 7500,  // MiWay has ~442k, moderate size
 };
 const DEFAULT_PAGE_SIZE = 10000;
+const ZIP_CACHE_BUCKET = "gtfs-zip-cache";
 
 const BATCH_SIZE = 200;
 const CPU_BUDGET_MS = 45_000; // Reduced from 50s to leave margin
