@@ -41,7 +41,21 @@ interface SyncStatus {
   completed_at: string | null;
 }
 
-function StatusBadge({ status }: { status: string }) {
+const STALE_THRESHOLD_MS = 10 * 60 * 1000; // 10 minutes
+
+function isStaleRunning(status: string, startedAt: string | null): boolean {
+  if (status !== "running" || !startedAt) return false;
+  return Date.now() - new Date(startedAt).getTime() > STALE_THRESHOLD_MS;
+}
+
+function StatusBadge({ status, startedAt }: { status: string; startedAt?: string | null }) {
+  if (isStaleRunning(status, startedAt ?? null)) {
+    return (
+      <Badge className="bg-warning/20 text-warning border-warning/30 flex items-center gap-1 w-fit">
+        <AlertTriangle className="h-3 w-3" /> Stale
+      </Badge>
+    );
+  }
   switch (status) {
     case "done":
       return <Badge className="bg-success/20 text-success border-success/30">Done</Badge>;
