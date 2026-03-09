@@ -6,7 +6,7 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
-import { ArrowLeft, Plus, Trash2, RefreshCw, Loader2, ChevronDown, ChevronRight, AlertTriangle } from "lucide-react";
+import { ArrowLeft, Plus, Trash2, RefreshCw, Loader2, ChevronDown, ChevronRight, AlertTriangle, CheckCircle2, Clock, XCircle } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 const SYNC_FUNCTIONS = [
