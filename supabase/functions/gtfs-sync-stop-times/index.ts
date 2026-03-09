@@ -6,12 +6,14 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-const PAGE_SIZE = 30000;
-const BATCH_SIZE = 500;
+const DEFAULT_PAGE_SIZE = 30000;
+const LARGE_PAGE_SIZE = 10000;
+const LARGE_TRIP_THRESHOLD = 50000;
+const BATCH_SIZE = 200;
+const CPU_BUDGET_MS = 35_000; // 35s safety margin under 50s edge function CPU limit
 
 /**
  * Get active service IDs for a SINGLE day (today + day_offset).
- * This is the core change: one day at a time instead of 7.
  */
 async function getActiveServiceIds(
   supabase: any,
@@ -226,7 +228,6 @@ Deno.serve(async (req) => {
     const url = new URL(req.url);
     const agencyFilter = url.searchParams.get("agency_id");
     const page = parseInt(url.searchParams.get("page") || "0");
-    // day_offset: 0 = today, 1 = tomorrow, ... 6 = today+6
     const dayOffset = parseInt(url.searchParams.get("day_offset") || "0");
 
     if (dayOffset < 0 || dayOffset > 6) {
@@ -236,8 +237,8 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Compute the file_type key for this day (e.g. "stop_times_d0")
     const fileType = `stop_times_d${dayOffset}`;
+    const invocationStart = Date.now();
 
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL")!,
@@ -267,7 +268,6 @@ Deno.serve(async (req) => {
       }
 
       try {
-        // Get active services and trips for JUST this one day
         const serviceIds = await getActiveServiceIds(supabase, agencyId, dayOffset);
 
         if (serviceIds.size === 0) {
@@ -284,6 +284,7 @@ Deno.serve(async (req) => {
         }
 
         const activeTripIds = await getActiveTripIds(supabase, agencyId, serviceIds);
+        console.log(`[${agencyId}] d${dayOffset} page=${page}: ${serviceIds.size} services, ${activeTripIds.size} trips`);
 
         if (activeTripIds.size === 0) {
           await supabase.from("gtfs_sync_status").upsert({
@@ -298,20 +299,33 @@ Deno.serve(async (req) => {
           continue;
         }
 
+        // Dynamic PAGE_SIZE based on trip count
+        const pageSize = activeTripIds.size > LARGE_TRIP_THRESHOLD ? LARGE_PAGE_SIZE : DEFAULT_PAGE_SIZE;
+        console.log(`[${agencyId}] Using PAGE_SIZE=${pageSize} (trips=${activeTripIds.size})`);
+
         let idxTripId = -1, idxArrival = -1, idxDeparture = -1;
         let idxStopId = -1, idxSeq = -1, idxPickup = -1, idxDropoff = -1, idxTimepoint = -1;
         let idxStopHeadsign = -1, idxShapeDist = -1;
         let headerParsed = false;
 
-        const skipUntil = page * PAGE_SIZE;
+        const skipUntil = page * pageSize;
         let matchedCount = 0;
         let processedInPage = 0;
         let hasMore = false;
+        let cpuBudgetHit = false;
         let batch: any[] = [];
         let totalRows = 0;
 
         await streamProcessZip(feed.feed_url, (line: string) => {
           if (hasMore) return false;
+
+          // CPU budget guard — stop early to avoid "CPU Time exceeded" kills
+          if (Date.now() - invocationStart > CPU_BUDGET_MS) {
+            hasMore = true;
+            cpuBudgetHit = true;
+            console.log(`[${agencyId}] CPU budget hit at ${Date.now() - invocationStart}ms, matched=${matchedCount}, processed=${processedInPage}`);
+            return false;
+          }
 
           if (!headerParsed) {
             const headers = parseCsvLine(line.replace(/^\uFEFF/, "")).map(h => h.trim());
@@ -343,7 +357,7 @@ Deno.serve(async (req) => {
             return;
           }
 
-          if (processedInPage >= PAGE_SIZE) {
+          if (processedInPage >= pageSize) {
             hasMore = true;
             return false;
           }
@@ -366,7 +380,7 @@ Deno.serve(async (req) => {
           });
         });
 
-        // Upsert batch — NO garbage collection here (that's the cleanup function's job)
+        // Upsert batch
         if (batch.length > 0) {
           for (let i = 0; i < batch.length; i += BATCH_SIZE) {
             const chunk = batch.slice(i, i + BATCH_SIZE);
@@ -386,6 +400,8 @@ Deno.serve(async (req) => {
 
         if (!headerParsed) throw new Error("stop_times.txt is empty");
 
+        console.log(`[${agencyId}] d${dayOffset} page=${page}: wrote ${totalRows} rows, hasMore=${hasMore}, cpuBudget=${cpuBudgetHit}, elapsed=${Date.now() - invocationStart}ms`);
+
         // Only mark done on final page
         if (!hasMore) {
           await supabase.from("gtfs_sync_status").upsert({
@@ -398,7 +414,7 @@ Deno.serve(async (req) => {
           }, { onConflict: "agency_id,file_type" });
         }
 
-        results[agencyId] = { ok: true, rows: totalRows, page, hasMore };
+        results[agencyId] = { ok: true, rows: totalRows, page, hasMore, cpuBudgetHit, pageSize };
       } catch (e) {
         await supabase.from("gtfs_sync_status").upsert({
           agency_id: agencyId,
