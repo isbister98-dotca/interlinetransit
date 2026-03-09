@@ -60,25 +60,37 @@ export function SheetVehicleDetail({ vehicle, onTrack, routeGeometry, routeLoadi
   const destination = stops.length > 0 ? stops[stops.length - 1].name : bearingToDirection(vehicle.bearing);
 
   let headsign = tripData?.trip_headsign;
+  let displayRouteId = vehicle.routeId;
+
   if (headsign) {
     // Remove route ID from the beginning of the headsign (e.g. "LW - Confederation GO" -> "Confederation GO")
     const routePrefixRegex = new RegExp(`^${vehicle.routeId}\\s*[-:]?\\s*`, 'i');
     headsign = headsign.replace(routePrefixRegex, '');
+
+    // Extract subroute letter if present (e.g. "C - Square One" -> append "C" to route ID)
+    const subrouteMatch = headsign.match(/^([A-Za-z0-9]{1,2})\s*-\s*(.*)/);
+    if (subrouteMatch) {
+      displayRouteId = `${displayRouteId}${subrouteMatch[1].toUpperCase()}`;
+      headsign = subrouteMatch[2];
+    }
+
+    // Replace dashes with interpuncts
+    headsign = headsign.replace(/\s+-\s+/g, ' · ');
   }
 
   // Build display label: prefer headsign, fallback to route_long_name
   const displayLabel = headsign
-    ? `${vehicle.routeId} · ${headsign}`
+    ? `${displayRouteId} · ${headsign}`
     : routeShape?.route_long_name
-    ? `${vehicle.routeId} · ${routeShape.route_long_name}`
-    : vehicle.routeLabel;
+    ? `${displayRouteId} · ${routeShape.route_long_name.replace(/\s+-\s+/g, ' · ')}`
+    : vehicle.routeLabel.replace(/\s+-\s+/g, ' · ');
 
   return (
     <div className="animate-slide-up">
       {/* Header */}
       <div className="flex items-center gap-3 mb-3">
         <RouteChip
-          routeId={vehicle.routeId}
+          routeId={displayRouteId}
           agency={vehicle.agency}
           routeColor={routeShape?.route_color}
         />
