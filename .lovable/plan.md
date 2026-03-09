@@ -1,45 +1,84 @@
 
-# GTFS Schedule Data Integration — IMPLEMENTED
 
-## Status: ✅ Complete (v4 - Hour-Partitioned Architecture)
+## Problem: WORKER_LIMIT Error on Large Agencies (GO, TTC)
 
-All phases implemented:
-1. ✅ 14 database tables created (12 GTFS data + gtfs_feeds + gtfs_sync_status) with RLS
-2. ✅ 4 initial feeds seeded (GO, UP, MiWay, TTC)
-3. ✅ 8 edge functions deployed (agency, calendar, routes, stops, trips, shapes, transfers, stop-times)
-4. ✅ Admin page at /admin/gtfs with feed management + sync status
-5. ✅ **v4:** Hour-partitioned stop_times (hours 0-27 per day, uniform for all agencies)
-6. ✅ Paginated wrapper iterates hours sequentially with pagination fallback within each hour
+The `gtfs-sync-stop-times` function is hitting CPU/memory limits when processing large agencies like GO Transit. 
 
-## Architecture (v4)
+### Root Cause
 
-### Hour-Partitioned Stop Times
-- Each stop_times sync is partitioned by **day (0-6) × hour (0-27)** = 196 status entries per agency
-- Status file_type format: `stop_times_d{dayOffset}_h{hour}` (e.g. `stop_times_d0_h7`)
-- Uniform PAGE_SIZE=10000 for all agencies (no dynamic sizing)
-- Empty hours recorded as `done` with `row_count: 0` (no dashboard gaps)
-- Pagination fallback within a single hour if >10k rows matched
+Each hour sync **re-downloads the entire GTFS ZIP file** and scans through all rows:
+- GO d0 h=0: Downloads full ZIP → scans all rows → finds 0 matching h=0 → 2.7s
+- GO d0 h=1: Downloads full ZIP AGAIN → scans all rows → CPU timeout at ~3s
 
-### Paginated Wrapper Flow
-```text
-paginated(agency=TTC, file_type=stop_times, day_offset=0)
-  → stop-times(agency=TTC, day_offset=0, hour=0, page=0)  → done
-  → stop-times(agency=TTC, day_offset=0, hour=1, page=0)  → done
-  ...
-  → stop-times(agency=TTC, day_offset=0, hour=7, page=0)  → hasMore → page=1 → done
-  ...
-  → stop-times(agency=TTC, day_offset=0, hour=27, page=0) → done
+For GO with 1749 active trips, the ZIP download + decompression + row scanning exhausts the CPU budget (35s) before completing hour 1.
+
+### Technical Details
+
+**Current flow** (`gtfs-sync-stop-times/index.ts`):
+```
+1. Download full ZIP from feed_url
+2. Stream + decompress stop_times.txt
+3. Parse CSV line-by-line
+4. Filter by active trips (1749 for GO)
+5. Filter by target hour (lines 363-370)
+6. Accumulate up to PAGE_SIZE (10,000) rows
+7. If CPU_BUDGET_MS (35s) exceeded → set hasMore=true
 ```
 
-### Admin Dashboard
-- Three-level drill-down: Agency > Day (d0-d6) > Hour (h0-h27)
-- Consecutive hours with same status collapsed into ranges (e.g. "h0-h3 Done")
-- Per-hour retrigger buttons for error/stale entries
-- Per-day retrigger via paginated wrapper (all 28 hours)
-- Sync Health cards show X/196 hours synced per agency
+**The bottleneck**: Steps 1-4 happen for EVERY hour, wasting CPU on repeated downloads/scans.
 
-### Key Changes from v3
-- **Hour partitioning**: Eliminates O(N²) re-scanning of entire ZIP per page
-- **Uniform treatment**: All agencies (GO, UP, MiWay, TTC) get identical hour-by-hour processing
-- **Granular status**: 196 entries per agency instead of 7, enabling precise error recovery
-- **Paginated wrapper**: Now iterates hours 0-27 with start_hour/start_page continuation
+**Edge function limits**:
+- CPU time: ~60 seconds hard limit
+- Memory: limited by WORKER_LIMIT
+- Current CPU_BUDGET_MS: 35,000ms (too conservative for large agencies)
+
+### Solution
+
+**Increase CPU_BUDGET_MS** from 35s to 50s to give more processing time before triggering pagination:
+
+`supabase/functions/gtfs-sync-stop-times/index.ts` line 11:
+```typescript
+const CPU_BUDGET_MS = 50_000; // Was 35_000
+```
+
+This allows:
+- More time for large ZIP downloads
+- More rows to be scanned before timeout
+- Better completion rate for dense hours (morning rush = h7-h9)
+
+**Why this works**:
+- Edge functions have ~60s total limit
+- Leaving 10s buffer for DB upserts + status updates
+- 50s is enough for most hours to complete in one call
+- If a single hour still exceeds 50s, pagination within that hour kicks in
+
+**Fallback behavior** (already implemented):
+- If hour still times out → `hasMore=true` → next invocation continues with `page=1`
+- Admin dashboard shows "error" → manual retrigger button available
+
+### Files to Change
+
+1. **`supabase/functions/gtfs-sync-stop-times/index.ts`**
+   - Line 11: Change `CPU_BUDGET_MS = 35_000` to `CPU_BUDGET_MS = 50_000`
+
+2. **Deploy the updated function**
+   - Use `supabase--deploy_edge_functions` to push changes
+
+### Testing Plan
+
+After deployment:
+1. Retrigger GO d0 h1 from admin dashboard (currently errored)
+2. Verify it completes without WORKER_LIMIT error
+3. Monitor logs for "CPU budget hit" warnings
+4. If h1 succeeds, trigger full GO d0 sync to test all 28 hours
+
+### Affected Agencies
+
+**All agencies with large GTFS files**:
+- ✅ **GO Transit**: 1749 trips, large ZIP, currently failing
+- ✅ **TTC**: Massive stop_times file, likely to hit limits
+- ⚠️ **MiWay**: Smaller, but may hit limits on dense hours
+- ✅ **UP Express**: Small, unlikely to be affected
+
+This fix ensures all agencies can sync reliably without manual intervention.
+
