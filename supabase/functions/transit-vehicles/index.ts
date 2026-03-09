@@ -23,6 +23,7 @@ interface Vehicle {
   speed?: number;
   occupancy?: "LOW" | "MEDIUM" | "HIGH" | "FULL";
   timestamp: number;
+  tripId?: string;
 }
 
 // ── Helpers ────────────────────────────────────────────
@@ -155,6 +156,7 @@ async function fetchMetrolinxVehicles(apiPath: string, agency: Agency): Promise<
       
       // For GO: extract route from vehicle ID suffix (e.g. "01260426-RH" → "RH")
       const routeId = agency === "GO" ? parseGoRouteId(rawRouteId, vehicleId) : rawRouteId;
+      const tripId = v.trip?.tripId ?? v.trip?.trip_id ?? undefined;
       
       return {
         id: `${agency.toLowerCase()}-${vehicleId}`,
@@ -168,6 +170,7 @@ async function fetchMetrolinxVehicles(apiPath: string, agency: Agency): Promise<
         speed: v.position.speed != null ? Math.round(v.position.speed * 3.6) : undefined,
         occupancy: mapOccupancy(v.occupancyStatus ?? v.occupancy_status),
         timestamp: (v.timestamp ?? 0) * 1000 || Date.now(),
+        tripId,
       };
     });
 }
@@ -185,6 +188,7 @@ async function fetchProtobufVehicles(url: string, agency: Agency): Promise<Vehic
     .map((e: any): Vehicle => {
       const v = e.vehicle;
       const routeId = v.trip?.routeId ?? v.trip?.route_id ?? "?";
+      const tripId = v.trip?.tripId ?? v.trip?.trip_id ?? undefined;
       return {
         id: `${agency.toLowerCase()}-${v.vehicle?.id ?? e.id}`,
         agency,
@@ -197,6 +201,7 @@ async function fetchProtobufVehicles(url: string, agency: Agency): Promise<Vehic
         speed: v.position.speed != null ? Math.round(v.position.speed * 3.6) : undefined,
         occupancy: mapOccupancy(v.occupancyStatus ?? v.occupancy_status),
         timestamp: (v.timestamp ?? 0) * 1000 || Date.now(),
+        tripId,
       };
     });
 }
