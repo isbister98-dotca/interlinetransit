@@ -428,6 +428,30 @@ export type Database = {
         }
         Relationships: []
       }
+      gtfs_trip_cache: {
+        Row: {
+          agency_id: string
+          created_at: string
+          day_offset: number
+          service_date: string
+          trip_ids: string[]
+        }
+        Insert: {
+          agency_id: string
+          created_at?: string
+          day_offset: number
+          service_date: string
+          trip_ids?: string[]
+        }
+        Update: {
+          agency_id?: string
+          created_at?: string
+          day_offset?: number
+          service_date?: string
+          trip_ids?: string[]
+        }
+        Relationships: []
+      }
       gtfs_trips: {
         Row: {
           agency_id: string

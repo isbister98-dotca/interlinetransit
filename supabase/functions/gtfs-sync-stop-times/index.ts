@@ -8,13 +8,61 @@ const corsHeaders = {
 
 // Agency-specific page sizes to handle large feeds
 const AGENCY_PAGE_SIZES: Record<string, number> = {
-  TTC: 5000,    // TTC has ~1.2M stop_times, use smaller pages
+  TTC: 3000,    // TTC has ~1.2M stop_times, use smaller pages
   MiWay: 7500,  // MiWay has ~442k, moderate size
 };
 const DEFAULT_PAGE_SIZE = 10000;
+const ZIP_CACHE_BUCKET = "gtfs-zip-cache";
 
 const BATCH_SIZE = 200;
 const CPU_BUDGET_MS = 45_000; // Reduced from 50s to leave margin
+
+/**
+ * Get cached or compute active trip IDs for agency+date
+ */
+async function getCachedTripIds(
+  supabase: any,
+  agencyId: string,
+  serviceDate: string,
+  dayOffset: number
+): Promise<Set<string>> {
+  // Try cache first
+  const { data: cached } = await supabase
+    .from("gtfs_trip_cache")
+    .select("trip_ids")
+    .eq("agency_id", agencyId)
+    .eq("service_date", serviceDate)
+    .single();
+  
+  if (cached?.trip_ids && Array.isArray(cached.trip_ids) && cached.trip_ids.length > 0) {
+    console.log(`[${agencyId}] Using cached trip IDs for ${serviceDate}: ${cached.trip_ids.length} trips`);
+    return new Set(cached.trip_ids);
+  }
+  
+  // Cache miss - compute
+  console.log(`[${agencyId}] Cache miss, computing trip IDs for ${serviceDate}`);
+  const serviceIds = await getActiveServiceIds(supabase, agencyId, dayOffset);
+  
+  if (serviceIds.size === 0) {
+    console.log(`[${agencyId}] No active services for ${serviceDate}`);
+    return new Set();
+  }
+  
+  const tripIds = await getActiveTripIds(supabase, agencyId, serviceIds);
+  
+  // Cache for next time
+  if (tripIds.size > 0) {
+    await supabase.from("gtfs_trip_cache").upsert({
+      agency_id: agencyId,
+      service_date: serviceDate,
+      trip_ids: Array.from(tripIds),
+      created_at: new Date().toISOString(),
+    }, { onConflict: "agency_id,service_date" });
+    console.log(`[${agencyId}] Cached ${tripIds.size} trip IDs for ${serviceDate}`);
+  }
+  
+  return tripIds;
+}
 
 /**
  * Get active service IDs for a SINGLE day (today + day_offset).
@@ -113,6 +161,46 @@ async function getActiveTripIds(
 }
 
 /**
+ * Download ZIP file from URL or storage cache
+ */
+async function getZipStream(feedUrl: string, agencyId: string, serviceDate: string, supabase: any): Promise<ReadableStream<Uint8Array>> {
+  const cacheKey = `${agencyId}/${serviceDate}.zip`;
+  
+  // Try cache first
+  const { data: cached, error: storageError } = await supabase
+    .storage
+    .from(ZIP_CACHE_BUCKET)
+    .download(cacheKey);
+  
+  if (cached && !storageError) {
+    console.log(`[${agencyId}] Using cached ZIP from storage: ${cacheKey}`);
+    return cached.stream();
+  }
+  
+  // Cache miss - download from URL
+  console.log(`[${agencyId}] Cache miss, downloading ZIP from ${feedUrl}`);
+  const response = await fetch(feedUrl);
+  if (!response.ok) throw new Error(`Download failed: ${response.status}`);
+  if (!response.body) throw new Error("No response body");
+  
+  // Clone stream for caching
+  const [cacheStream, processStream] = response.body.tee();
+  
+  // Upload to storage (async, don't wait)
+  (async () => {
+    try {
+      const blob = await new Response(cacheStream).blob();
+      await supabase.storage.from(ZIP_CACHE_BUCKET).upload(cacheKey, blob, { upsert: true });
+      console.log(`[${agencyId}] Cached ZIP to storage: ${cacheKey}`);
+    } catch (e) {
+      console.error(`[${agencyId}] Failed to cache ZIP:`, e.message);
+    }
+  })();
+  
+  return processStream;
+}
+
+/**
  * Parse a single CSV line handling quoted fields
  */
 function parseCsvLine(line: string): string[] {
@@ -146,13 +234,9 @@ function parseCsvLine(line: string): string[] {
  * Stream-process the ZIP file and extract stop_times.txt lines
  */
 async function streamProcessZip(
-  feedUrl: string,
+  zipStream: ReadableStream<Uint8Array>,
   onLine: (line: string) => boolean | void
 ): Promise<void> {
-  const response = await fetch(feedUrl);
-  if (!response.ok) throw new Error(`Download failed: ${response.status}`);
-  if (!response.body) throw new Error("No response body");
-
   return new Promise((resolve, reject) => {
     const decoder = new TextDecoder();
     let lineBuffer = "";
@@ -201,7 +285,7 @@ async function streamProcessZip(
 
     unzip.register(UnzipInflate);
 
-    const reader = response.body.getReader();
+    const reader = zipStream.getReader();
 
     async function pump(): Promise<void> {
       try {
@@ -285,6 +369,11 @@ Deno.serve(async (req) => {
       // Get agency-specific page size
       const PAGE_SIZE = AGENCY_PAGE_SIZES[agencyId] ?? DEFAULT_PAGE_SIZE;
 
+      // Compute service date string (YYYYMMDD format)
+      const d = new Date();
+      d.setDate(d.getDate() + dayOffset);
+      const serviceDate = d.toISOString().slice(0, 10).replace(/-/g, "");
+
       if (page === 0) {
         await supabase.from("gtfs_sync_status").upsert({
           agency_id: agencyId,
@@ -298,26 +387,8 @@ Deno.serve(async (req) => {
       }
 
       try {
-        const serviceIds = await getActiveServiceIds(supabase, agencyId, dayOffset);
-
-        if (serviceIds.size === 0) {
-          await supabase.from("gtfs_sync_status").upsert({
-            agency_id: agencyId,
-            file_type: fileType,
-            status: "done",
-            row_count: 0,
-            completed_at: new Date().toISOString(),
-            error_msg: `No active services for day_offset=${dayOffset}`,
-          }, { onConflict: "agency_id,file_type" });
-          results[agencyId] = { ok: true, rows: 0, hasMore: false, note: "No active services" };
-          continue;
-        }
-
-        const tripFetchStart = Date.now();
-        const activeTripIds = await getActiveTripIds(supabase, agencyId, serviceIds);
-        const tripFetchMs = Date.now() - tripFetchStart;
-        
-        console.log(`[${agencyId}] d${dayOffset} h=${targetHour ?? "all"} page=${page}: ${serviceIds.size} services, ${activeTripIds.size} trips (fetched in ${tripFetchMs}ms)`);
+        // Use cached trip IDs (or compute if cache miss)
+        const activeTripIds = await getCachedTripIds(supabase, agencyId, serviceDate, dayOffset);
 
         if (activeTripIds.size === 0) {
           await supabase.from("gtfs_sync_status").upsert({
@@ -345,7 +416,10 @@ Deno.serve(async (req) => {
         let batch: any[] = [];
         let totalRows = 0;
 
-        await streamProcessZip(feed.feed_url, (line: string) => {
+        // Get ZIP stream (cached or download)
+        const zipStream = await getZipStream(feed.feed_url, agencyId, serviceDate, supabase);
+        
+        await streamProcessZip(zipStream, (line: string) => {
           if (hasMore) return false;
 
           // CPU budget guard
