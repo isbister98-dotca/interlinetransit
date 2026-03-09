@@ -6,7 +6,7 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
-import { ArrowLeft, Plus, Trash2, RefreshCw, Loader2, ChevronDown, ChevronRight, AlertTriangle, CheckCircle2, Clock, XCircle } from "lucide-react";
+import { ArrowLeft, Plus, Trash2, RefreshCw, Loader2, ChevronDown, ChevronRight, AlertTriangle, CheckCircle2, Clock, XCircle, StopCircle } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 const SYNC_FUNCTIONS = [
@@ -100,7 +100,9 @@ function StopTimesGroup({
     ? "done"
     : "pending";
 
-  const totalRows = allStatuses.reduce((acc, s) => acc + (s.row_count || 0), 0);
+  // Exclude cleanup from totalRows — cleanup tracks *deleted* rows, not data
+  const dataStatuses = allStatuses.filter(s => s.file_type !== "stop_times_cleanup");
+  const totalRows = dataStatuses.reduce((acc, s) => acc + (s.row_count || 0), 0);
   const lastCompleted = allStatuses
     .filter(s => s.completed_at)
     .sort((a, b) => new Date(b.completed_at!).getTime() - new Date(a.completed_at!).getTime())[0];
@@ -463,11 +465,30 @@ export default function AdminGtfsScreen() {
 
   return (
     <div className="min-h-screen bg-background p-4 pb-24 max-w-4xl mx-auto">
-      <div className="flex items-center gap-3 mb-6">
-        <Button variant="ghost" size="icon" onClick={() => navigate("/map")}>
-          <ArrowLeft className="h-5 w-5" />
-        </Button>
-        <h1 className="text-xl font-semibold text-foreground">GTFS Feed Admin</h1>
+      <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center gap-3">
+          <Button variant="ghost" size="icon" onClick={() => navigate("/map")}>
+            <ArrowLeft className="h-5 w-5" />
+          </Button>
+          <h1 className="text-xl font-semibold text-foreground">GTFS Feed Admin</h1>
+        </div>
+        {syncStatuses.some(s => s.status === "running") && (
+          <Button
+            variant="destructive"
+            size="sm"
+            onClick={async () => {
+              const runningIds = syncStatuses.filter(s => s.status === "running").map(s => s.id);
+              for (const id of runningIds) {
+                await supabase.from("gtfs_sync_status").update({ status: "cancelled", completed_at: new Date().toISOString() }).eq("id", id);
+              }
+              toast({ title: `Cancelled ${runningIds.length} running sync(s)` });
+              fetchData();
+            }}
+          >
+            <StopCircle className="h-4 w-4 mr-1" />
+            Cancel All Syncs
+          </Button>
+        )}
       </div>
 
       {/* Add Feed */}
