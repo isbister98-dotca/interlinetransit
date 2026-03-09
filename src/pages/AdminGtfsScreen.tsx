@@ -198,6 +198,7 @@ export default function AdminGtfsScreen() {
   const [newAgencyId, setNewAgencyId] = useState("");
   const [newFeedUrl, setNewFeedUrl] = useState("");
   const [syncing, setSyncing] = useState<Record<string, boolean>>({});
+  const [retriggeringDays, setRetriggeringDays] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const { toast } = useToast();
   const navigate = useNavigate();
