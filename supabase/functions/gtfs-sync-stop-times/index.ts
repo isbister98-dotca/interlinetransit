@@ -8,7 +8,7 @@ const corsHeaders = {
 
 const PAGE_SIZE = 10000;
 const BATCH_SIZE = 200;
-const CPU_BUDGET_MS = 35_000;
+const CPU_BUDGET_MS = 50_000;
 
 /**
  * Get active service IDs for a SINGLE day (today + day_offset).
