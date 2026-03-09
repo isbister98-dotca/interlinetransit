@@ -227,6 +227,7 @@ export default function AdminGtfsScreen() {
   const [newFeedUrl, setNewFeedUrl] = useState("");
   const [syncing, setSyncing] = useState<Record<string, boolean>>({});
   const [retriggeringDays, setRetriggeringDays] = useState<Set<string>>(new Set());
+  const [syncingAllDays, setSyncingAllDays] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(true);
   const { toast } = useToast();
   const navigate = useNavigate();
@@ -346,7 +347,6 @@ export default function AdminGtfsScreen() {
   const syncStopTimesOnly = async (agencyId: string) => {
     setSyncing(prev => ({ ...prev, [agencyId]: true }));
 
-    // Sync stop_times per day: d0 (today) first, then d1–d6
     for (const dayOffset of DAY_OFFSETS) {
       try {
         let page = 0;
@@ -360,12 +360,13 @@ export default function AdminGtfsScreen() {
           if (!agencyResult?.hasMore) break;
           page++;
         }
+        // 3s delay between days to avoid concurrency issues
+        await new Promise(r => setTimeout(r, 3000));
       } catch (e) {
         console.error(`Error syncing stop_times d${dayOffset} for ${agencyId}:`, e);
       }
     }
 
-    // Cleanup (garbage collection)
     try {
       await callFunction("gtfs-sync-stop-times-cleanup", agencyId);
     } catch (e) {
@@ -374,6 +375,42 @@ export default function AdminGtfsScreen() {
 
     setSyncing(prev => ({ ...prev, [agencyId]: false }));
     toast({ title: `Stop times sync complete for ${agencyId}` });
+    fetchData();
+  };
+
+  const syncAllDays = async (agencyId: string) => {
+    setSyncingAllDays(prev => ({ ...prev, [agencyId]: true }));
+    
+    for (const dayOffset of DAY_OFFSETS) {
+      try {
+        let page = 0;
+        while (true) {
+          const result = await callFunction(
+            "gtfs-sync-stop-times",
+            agencyId,
+            `&page=${page}&day_offset=${dayOffset}`
+          );
+          const agencyResult = result?.results?.[agencyId];
+          if (!agencyResult?.hasMore) break;
+          page++;
+        }
+        // 5s delay between days to prevent concurrency stalls
+        await new Promise(r => setTimeout(r, 5000));
+        fetchData(); // Refresh status after each day
+      } catch (e) {
+        console.error(`Error syncing ${agencyId} d${dayOffset}:`, e);
+      }
+    }
+
+    // Run cleanup after all days
+    try {
+      await callFunction("gtfs-sync-stop-times-cleanup", agencyId);
+    } catch (e) {
+      console.error(`Error in cleanup for ${agencyId}:`, e);
+    }
+
+    setSyncingAllDays(prev => ({ ...prev, [agencyId]: false }));
+    toast({ title: `All days synced for ${agencyId}` });
     fetchData();
   };
 
@@ -641,6 +678,8 @@ export default function AdminGtfsScreen() {
                           statuses={stopTimesStatuses(agencyId)}
                           onRetriggerDay={retriggerDay}
                           retriggeringDays={retriggeringDays}
+                          onSyncAllDays={syncAllDays}
+                          syncingAllDays={!!syncingAllDays[agencyId]}
                         />
                       )}
                     </>
