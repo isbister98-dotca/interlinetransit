@@ -1,46 +1,34 @@
 
-# GTFS Schedule Data Integration — IMPLEMENTED
 
-## Status: ✅ Complete (v2 - Daily Workflow Architecture)
+## Problem
 
-All phases implemented:
-1. ✅ 14 database tables created (12 GTFS data + gtfs_feeds + gtfs_sync_status) with RLS
-2. ✅ 4 initial feeds seeded (GO, UP, TTC, MiWay)
-3. ✅ 8 edge functions deployed (agency, calendar, routes, stops, trips, shapes, transfers, stop-times)
-4. ✅ Admin page at /admin/gtfs with feed management + sync status
-5. ✅ **NEW:** Daily 7-workflow stop_times architecture with per-day syncs
+TTC publishes their GTFS feed **ahead of time** for the next schedule period. Right now the calendar shows `start_date = 20260315` but today is March 9. The current stop_times sync skips TTC because no services match today's date. Meanwhile, TTC buses are actually running the same schedule patterns (weekday/Saturday/Sunday) -- just under a calendar window that hasn't "started" yet.
 
-## Architecture (v2)
+## Solution: Date-Bounds Fallback
 
-### Daily Stop Times Workflow
-```text
-Midnight daily (5:00 UTC / ~midnight ET)
-├── 00:00 → stop_times day_offset=0  (TODAY - highest priority)
-├── 00:05 → stop_times day_offset=1  (tomorrow)
-├── 00:10 → stop_times day_offset=2
-├── 00:15 → stop_times day_offset=3
-├── 00:20 → stop_times day_offset=4
-├── 00:25 → stop_times day_offset=5
-├── 00:30 → stop_times day_offset=6
-└── 00:40 → stop_times cleanup (GC - garbage collection)
-```
+Modify `getActiveServiceIds` in `gtfs-sync-stop-times/index.ts` to add a **fallback**: if the strict date-bounded query returns zero services, re-query `gtfs_calendar` using **only the day-of-week flag** (ignoring `start_date`/`end_date`). This way:
 
-### Key Changes from v1
-- **Single-day processing**: Each invocation builds `activeTripIds` for ONE day (~1/7th memory)
-- **Decoupled GC**: Garbage collection runs separately after all days complete
-- **No race conditions**: Per-day syncs only upsert; cleanup only deletes
-- **Today-first**: day_offset=0 runs at midnight ensuring freshest schedule data
+- Service 1 (Mon-Fri) matches any weekday, even before March 15
+- Service 2 (Saturday) matches any Saturday
+- Service 3 (Sunday) matches any Sunday
+- `calendar_dates` exceptions are still applied in the fallback (filtered to dates within the feed's range)
 
-### Status Tracking
-- `stop_times_d0` through `stop_times_d6` - per-day sync status
-- `stop_times_cleanup` - garbage collection status
-- Admin UI shows expandable grouped view for all 8 statuses
+The same fallback applies to the cleanup function's `getAllActiveServiceIds`.
 
-## Cron Schedule
-- **Weekly (Monday 3am ET)**: agency, calendar, routes, stops, trips, shapes, transfers
-- **Daily (midnight ET)**: stop_times d0-d6 + cleanup (32 jobs: 8 slots × 4 agencies)
+## Why This Is Safe
 
-## Edge Functions
-- `gtfs-sync-stop-times` - accepts `day_offset=0-6` param, processes single day
-- `gtfs-sync-stop-times-cleanup` - builds 7-day union, runs garbage collection
-- `gtfs-sync-paginated` - wrapper that chains pages, forwards `day_offset`
+- The fallback only triggers when **zero** services match the strict date range -- so agencies with current calendars (GO, MiWay, UP) are unaffected.
+- TTC's day-of-week patterns correctly represent the real-world service (weekday vs weekend).
+- Once March 15 arrives, the strict query will match and the fallback is never reached.
+
+## Changes
+
+### 1. `supabase/functions/gtfs-sync-stop-times/index.ts`
+- In `getActiveServiceIds`: after the existing strict query, if `serviceIds.size === 0`, run a second query on `gtfs_calendar` matching only the day-of-week column (no date bounds). Apply `calendar_dates` exceptions for dates within the feed's range.
+- Add a console log when fallback is used for debugging.
+
+### 2. `supabase/functions/gtfs-sync-stop-times-cleanup/index.ts`
+- Same fallback logic in `getAllActiveServiceIds`: if strict date-bounded query returns nothing for a given day, fall back to day-of-week only.
+
+### No other files change. No database changes needed.
+
