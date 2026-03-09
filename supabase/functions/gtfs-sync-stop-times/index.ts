@@ -12,10 +12,9 @@ const AGENCY_PAGE_SIZES: Record<string, number> = {
   MiWay: 7500,  // MiWay has ~442k, moderate size
 };
 const DEFAULT_PAGE_SIZE = 10000;
-const ZIP_CACHE_BUCKET = "gtfs-zip-cache";
 
 const BATCH_SIZE = 200;
-const CPU_BUDGET_MS = 45_000; // Reduced from 50s to leave margin
+const CPU_BUDGET_MS = 45_000;
 
 /**
  * Get cached or compute active trip IDs for agency+date
@@ -27,12 +26,16 @@ async function getCachedTripIds(
   dayOffset: number
 ): Promise<Set<string>> {
   // Try cache first
-  const { data: cached } = await supabase
+  const { data: cached, error: cacheReadErr } = await supabase
     .from("gtfs_trip_cache")
     .select("trip_ids")
     .eq("agency_id", agencyId)
     .eq("service_date", serviceDate)
     .single();
+  
+  if (cacheReadErr && cacheReadErr.code !== "PGRST116") {
+    console.log(`[${agencyId}] Trip cache read error: ${cacheReadErr.message}`);
+  }
   
   if (cached?.trip_ids && Array.isArray(cached.trip_ids) && cached.trip_ids.length > 0) {
     console.log(`[${agencyId}] Using cached trip IDs for ${serviceDate}: ${cached.trip_ids.length} trips`);
@@ -50,15 +53,21 @@ async function getCachedTripIds(
   
   const tripIds = await getActiveTripIds(supabase, agencyId, serviceIds);
   
-  // Cache for next time
+  // Cache for next time - include day_offset!
   if (tripIds.size > 0) {
-    await supabase.from("gtfs_trip_cache").upsert({
+    const { error: upsertErr } = await supabase.from("gtfs_trip_cache").upsert({
       agency_id: agencyId,
       service_date: serviceDate,
+      day_offset: dayOffset,
       trip_ids: Array.from(tripIds),
       created_at: new Date().toISOString(),
     }, { onConflict: "agency_id,service_date" });
-    console.log(`[${agencyId}] Cached ${tripIds.size} trip IDs for ${serviceDate}`);
+    
+    if (upsertErr) {
+      console.error(`[${agencyId}] Failed to cache trip IDs: ${upsertErr.message}`);
+    } else {
+      console.log(`[${agencyId}] Cached ${tripIds.size} trip IDs for ${serviceDate}`);
+    }
   }
   
   return tripIds;
@@ -121,7 +130,6 @@ async function getActiveServiceIds(
 
 /**
  * Get all active trip IDs for the given service IDs
- * Optimized with smaller batch sizes for large agencies
  */
 async function getActiveTripIds(
   supabase: any,
@@ -131,9 +139,8 @@ async function getActiveTripIds(
   const tripIds = new Set<string>();
   const serviceArr = Array.from(serviceIds);
 
-  // Use smaller service batches for more responsive queries
-  const serviceBatchSize = 50; // Reduced from 100
-  const rowBatchSize = 500;    // Reduced from 1000
+  const serviceBatchSize = 50;
+  const rowBatchSize = 500;
 
   for (let i = 0; i < serviceArr.length; i += serviceBatchSize) {
     const batch = serviceArr.slice(i, i + serviceBatchSize);
@@ -161,43 +168,81 @@ async function getActiveTripIds(
 }
 
 /**
- * Download ZIP file from URL or storage cache
+ * Get ZIP stream using true streaming - no Blob buffering
+ * Only attempts to cache on page=0 && hour=0
  */
-async function getZipStream(feedUrl: string, agencyId: string, serviceDate: string, supabase: any): Promise<ReadableStream<Uint8Array>> {
+async function getZipStream(
+  feedUrl: string,
+  agencyId: string,
+  serviceDate: string,
+  shouldCache: boolean
+): Promise<ReadableStream<Uint8Array>> {
+  const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
+  const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const cacheKey = `${agencyId}/${serviceDate}.zip`;
+  const storageUrl = `${SUPABASE_URL}/storage/v1/object/gtfs-zip-cache/${cacheKey}`;
   
-  // Try cache first
-  const { data: cached, error: storageError } = await supabase
-    .storage
-    .from(ZIP_CACHE_BUCKET)
-    .download(cacheKey);
-  
-  if (cached && !storageError) {
-    console.log(`[${agencyId}] Using cached ZIP from storage: ${cacheKey}`);
-    return cached.stream();
+  // Try cache first via direct HTTP (no SDK = no memory buffering)
+  try {
+    const cacheRes = await fetch(storageUrl, {
+      method: "GET",
+      headers: {
+        "Authorization": `Bearer ${SERVICE_ROLE_KEY}`,
+      },
+    });
+    
+    if (cacheRes.ok && cacheRes.body) {
+      console.log(`[${agencyId}] Using cached ZIP from storage: ${cacheKey}`);
+      return cacheRes.body;
+    }
+    
+    // 404 or other = cache miss, fall through
+    if (cacheRes.status !== 404) {
+      console.log(`[${agencyId}] Storage returned ${cacheRes.status}, proceeding with download`);
+    }
+  } catch (e) {
+    console.log(`[${agencyId}] Storage fetch error: ${e.message}, proceeding with download`);
   }
   
-  // Cache miss - download from URL
+  // Cache miss - download from source
   console.log(`[${agencyId}] Cache miss, downloading ZIP from ${feedUrl}`);
   const response = await fetch(feedUrl);
   if (!response.ok) throw new Error(`Download failed: ${response.status}`);
   if (!response.body) throw new Error("No response body");
   
-  // Clone stream for caching
-  const [cacheStream, processStream] = response.body.tee();
+  // If we should cache (page=0, hour=0), use tee() to stream to both storage and processing
+  if (shouldCache) {
+    const [processStream, uploadStream] = response.body.tee();
+    
+    // Upload to storage in background - use streaming upload, no blob!
+    (async () => {
+      try {
+        const uploadRes = await fetch(storageUrl, {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${SERVICE_ROLE_KEY}`,
+            "Content-Type": "application/zip",
+            "x-upsert": "true",
+          },
+          body: uploadStream,
+        });
+        
+        if (uploadRes.ok) {
+          console.log(`[${agencyId}] Cached ZIP to storage: ${cacheKey}`);
+        } else {
+          const errText = await uploadRes.text();
+          console.error(`[${agencyId}] Storage upload failed: ${uploadRes.status} - ${errText}`);
+        }
+      } catch (e) {
+        console.error(`[${agencyId}] Storage upload error: ${e.message}`);
+      }
+    })();
+    
+    return processStream;
+  }
   
-  // Upload to storage (async, don't wait)
-  (async () => {
-    try {
-      const blob = await new Response(cacheStream).blob();
-      await supabase.storage.from(ZIP_CACHE_BUCKET).upload(cacheKey, blob, { upsert: true });
-      console.log(`[${agencyId}] Cached ZIP to storage: ${cacheKey}`);
-    } catch (e) {
-      console.error(`[${agencyId}] Failed to cache ZIP:`, e.message);
-    }
-  })();
-  
-  return processStream;
+  // Not caching, just return the stream directly
+  return response.body;
 }
 
 /**
@@ -416,8 +461,11 @@ Deno.serve(async (req) => {
         let batch: any[] = [];
         let totalRows = 0;
 
+        // Only cache ZIP on first page of first hour (page=0, hour=0 or hour=null)
+        const shouldCacheZip = page === 0 && (targetHour === null || targetHour === 0);
+        
         // Get ZIP stream (cached or download)
-        const zipStream = await getZipStream(feed.feed_url, agencyId, serviceDate, supabase);
+        const zipStream = await getZipStream(feed.feed_url, agencyId, serviceDate, shouldCacheZip);
         
         await streamProcessZip(zipStream, (line: string) => {
           if (hasMore) return false;
