@@ -300,6 +300,7 @@ Deno.serve(async (req) => {
 
         let idxTripId = -1, idxArrival = -1, idxDeparture = -1;
         let idxStopId = -1, idxSeq = -1, idxPickup = -1, idxDropoff = -1, idxTimepoint = -1;
+        let idxStopHeadsign = -1, idxShapeDist = -1;
         let headerParsed = false;
 
         const skipUntil = page * PAGE_SIZE;
@@ -322,6 +323,8 @@ Deno.serve(async (req) => {
             idxPickup = headers.indexOf("pickup_type");
             idxDropoff = headers.indexOf("drop_off_type");
             idxTimepoint = headers.indexOf("timepoint");
+            idxStopHeadsign = headers.indexOf("stop_headsign");
+            idxShapeDist = headers.indexOf("shape_dist_traveled");
 
             if (idxTripId < 0 || idxStopId < 0 || idxSeq < 0) {
               throw new Error("stop_times.txt missing required columns");
@@ -358,6 +361,8 @@ Deno.serve(async (req) => {
             pickup_type: idxPickup >= 0 && vals[idxPickup]?.trim() ? parseInt(vals[idxPickup].trim()) : null,
             drop_off_type: idxDropoff >= 0 && vals[idxDropoff]?.trim() ? parseInt(vals[idxDropoff].trim()) : null,
             timepoint: idxTimepoint >= 0 && vals[idxTimepoint]?.trim() ? parseInt(vals[idxTimepoint].trim()) : null,
+            stop_headsign: idxStopHeadsign >= 0 ? (vals[idxStopHeadsign]?.trim() || null) : null,
+            shape_dist_traveled: idxShapeDist >= 0 && vals[idxShapeDist]?.trim() ? parseFloat(vals[idxShapeDist].trim()) : null,
           });
         });
 

@@ -291,6 +291,8 @@ export type Database = {
           departure_time: string | null
           drop_off_type: number | null
           pickup_type: number | null
+          shape_dist_traveled: number | null
+          stop_headsign: string | null
           stop_id: string
           stop_sequence: number
           timepoint: number | null
@@ -302,6 +304,8 @@ export type Database = {
           departure_time?: string | null
           drop_off_type?: number | null
           pickup_type?: number | null
+          shape_dist_traveled?: number | null
+          stop_headsign?: string | null
           stop_id: string
           stop_sequence: number
           timepoint?: number | null
@@ -313,6 +317,8 @@ export type Database = {
           departure_time?: string | null
           drop_off_type?: number | null
           pickup_type?: number | null
+          shape_dist_traveled?: number | null
+          stop_headsign?: string | null
           stop_id?: string
           stop_sequence?: number
           timepoint?: number | null
