@@ -1,0 +1,1 @@
+ALTER TABLE gtfs_sync_status ADD COLUMN IF NOT EXISTS retry_count integer DEFAULT 0;

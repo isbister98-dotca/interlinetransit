@@ -6,11 +6,29 @@ const corsHeaders = {
 };
 
 const MAX_HOUR = 27;
+const MAX_RETRIES = 5;
+
+/**
+ * Check if an error message indicates a retriable resource limit
+ */
+function isRetriableError(errText: string): boolean {
+  const retriablePatterns = [
+    "WORKER_LIMIT",
+    "CPU Time exceeded",
+    "CPU budget",
+    "memory",
+    "Resource temporarily unavailable",
+  ];
+  return retriablePatterns.some(p => errText.toLowerCase().includes(p.toLowerCase()));
+}
 
 /**
  * Paginated wrapper that auto-chains calls for shapes and stop-times.
  * For stop_times, iterates hours 0-27 sequentially for the given day.
  * Within each hour, paginates if needed.
+ * 
+ * Auto-retries retriable errors (WORKER_LIMIT, CPU exceeded) up to 5 times
+ * with exponential backoff.
  *
  * Query params:
  *   - agency_id (required)
@@ -75,9 +93,10 @@ Deno.serve(async (req) => {
           timedOut = true;
           // Mark the current in-progress hour as error so it's retriggerable from the admin UI
           if (!singleHour) {
+            const ft = `stop_times_d${dayOffset}_h${currentHour}`;
             await supabase.from("gtfs_sync_status").upsert({
               agency_id: agencyId,
-              file_type: `stop_times_d${dayOffset}_h${currentHour}`,
+              file_type: ft,
               status: "error",
               error_msg: `Timed out at page ${currentPage} — please retrigger`,
               completed_at: new Date().toISOString(),
@@ -86,6 +105,7 @@ Deno.serve(async (req) => {
           break;
         }
 
+        const ft = `stop_times_d${dayOffset}_h${currentHour}`;
         const fnUrl = `${supabaseUrl}/functions/v1/${functionName}?agency_id=${encodeURIComponent(agencyId)}&day_offset=${encodeURIComponent(dayOffset)}&hour=${currentHour}&page=${currentPage}`;
 
         const res = await fetch(fnUrl, {
@@ -98,7 +118,57 @@ Deno.serve(async (req) => {
 
         if (!res.ok) {
           const errText = await res.text();
-          const ft = `stop_times_d${dayOffset}_h${currentHour}`;
+          
+          // Check if this is a retriable error
+          if (isRetriableError(errText)) {
+            // Get current retry count
+            const { data: statusRow } = await supabase
+              .from("gtfs_sync_status")
+              .select("retry_count")
+              .eq("agency_id", agencyId)
+              .eq("file_type", ft)
+              .single();
+            
+            const currentRetryCount = statusRow?.retry_count ?? 0;
+            const nextRetryCount = currentRetryCount + 1;
+            
+            if (nextRetryCount <= MAX_RETRIES) {
+              // Update status with retry info
+              await supabase.from("gtfs_sync_status").upsert({
+                agency_id: agencyId,
+                file_type: ft,
+                status: "running",
+                retry_count: nextRetryCount,
+                error_msg: `Retry ${nextRetryCount}/${MAX_RETRIES}: ${errText.substring(0, 100)}...`,
+                completed_at: null,
+              }, { onConflict: "agency_id,file_type" });
+              
+              // Exponential backoff: 1s, 2s, 4s, 8s, 16s
+              const backoffMs = Math.pow(2, nextRetryCount - 1) * 1000;
+              console.log(`[${agencyId}] Retry ${nextRetryCount}/${MAX_RETRIES} for hour=${currentHour}, waiting ${backoffMs}ms`);
+              await new Promise(r => setTimeout(r, backoffMs));
+              
+              // Retry same hour/page
+              continue;
+            }
+            
+            // Max retries exceeded
+            console.log(`[${agencyId}] Max retries (${MAX_RETRIES}) exceeded for hour=${currentHour}`);
+            await supabase.from("gtfs_sync_status").upsert({
+              agency_id: agencyId,
+              file_type: ft,
+              status: "error",
+              error_msg: `Failed after ${MAX_RETRIES} retries: ${errText.substring(0, 200)}`,
+              completed_at: new Date().toISOString(),
+            }, { onConflict: "agency_id,file_type" });
+            
+            // Move to next hour instead of failing the entire sync
+            currentHour++;
+            currentPage = 0;
+            continue;
+          }
+          
+          // Non-retriable error
           await supabase.from("gtfs_sync_status").upsert({
             agency_id: agencyId,
             file_type: ft,
@@ -124,10 +194,61 @@ Deno.serve(async (req) => {
         }
 
         if (!agencyResult.ok) {
+          // Check if inner function returned a retriable error message
+          if (agencyResult.error && isRetriableError(agencyResult.error)) {
+            const { data: statusRow } = await supabase
+              .from("gtfs_sync_status")
+              .select("retry_count")
+              .eq("agency_id", agencyId)
+              .eq("file_type", ft)
+              .single();
+            
+            const currentRetryCount = statusRow?.retry_count ?? 0;
+            const nextRetryCount = currentRetryCount + 1;
+            
+            if (nextRetryCount <= MAX_RETRIES) {
+              await supabase.from("gtfs_sync_status").upsert({
+                agency_id: agencyId,
+                file_type: ft,
+                status: "running",
+                retry_count: nextRetryCount,
+                error_msg: `Retry ${nextRetryCount}/${MAX_RETRIES}: ${agencyResult.error.substring(0, 100)}...`,
+                completed_at: null,
+              }, { onConflict: "agency_id,file_type" });
+              
+              const backoffMs = Math.pow(2, nextRetryCount - 1) * 1000;
+              console.log(`[${agencyId}] Retry ${nextRetryCount}/${MAX_RETRIES} for hour=${currentHour}, waiting ${backoffMs}ms`);
+              await new Promise(r => setTimeout(r, backoffMs));
+              continue;
+            }
+            
+            // Max retries exceeded, move to next hour
+            await supabase.from("gtfs_sync_status").upsert({
+              agency_id: agencyId,
+              file_type: ft,
+              status: "error",
+              error_msg: `Failed after ${MAX_RETRIES} retries: ${agencyResult.error}`,
+              completed_at: new Date().toISOString(),
+            }, { onConflict: "agency_id,file_type" });
+            
+            currentHour++;
+            currentPage = 0;
+            continue;
+          }
+          
           return new Response(
             JSON.stringify({ error: agencyResult.error, hour: currentHour, page: currentPage }),
             { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
           );
+        }
+
+        // Success - reset retry count on successful completion
+        if (!agencyResult.hasMore) {
+          await supabase.from("gtfs_sync_status").upsert({
+            agency_id: agencyId,
+            file_type: ft,
+            retry_count: 0,  // Reset retry count on success
+          }, { onConflict: "agency_id,file_type" });
         }
 
         totalRows += agencyResult.rows || 0;

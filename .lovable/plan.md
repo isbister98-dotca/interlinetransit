@@ -1,98 +1,55 @@
 
+# GTFS Schedule Data Integration — IMPLEMENTED
 
-## Problem Analysis
+## Status: ✅ Complete (v5 - Auto-Retry Architecture)
 
-TTC stop_times sync fails consistently with `WORKER_LIMIT` and `CPU Time exceeded` errors. The root cause:
+All phases implemented:
+1. ✅ 14 database tables created (12 GTFS data + gtfs_feeds + gtfs_sync_status) with RLS
+2. ✅ 4 initial feeds seeded (GO, UP, MiWay, TTC)
+3. ✅ 8 edge functions deployed (agency, calendar, routes, stops, trips, shapes, transfers, stop-times)
+4. ✅ Admin page at /admin/gtfs with feed management + sync status
+5. ✅ Hour-partitioned stop_times (hours 0-27 per day, uniform for all agencies)
+6. ✅ **v5:** Server-side auto-retry with exponential backoff (up to 5 retries)
 
-1. **TTC has ~1.2M stop_times rows** (vs MiWay 442k, GO 267k) and ~39,451 trips per service day
-2. **Each hour invocation re-downloads the entire ZIP and rebuilds the 39k-trip Set** before streaming
-3. **Building a 39k-element Set from 1000-row batched DB queries** takes many round-trips
-4. The edge function hits CPU/memory limits before it can even start streaming the ZIP
+## Architecture (v5)
 
-## Core Issue
+### Auto-Retry System
+- `retry_count` column in `gtfs_sync_status` tracks attempts per hour
+- Retriable errors: `WORKER_LIMIT`, `CPU Time exceeded`, `CPU budget`, `memory`
+- Exponential backoff: 1s, 2s, 4s, 8s, 16s between retries
+- After 5 failed retries, marks as permanent error and moves to next hour
+- Successful completion resets `retry_count` to 0
 
-The current architecture calls `getActiveTripIds()` on every single hourly invocation. For TTC this means:
-- ~40 paginated DB queries just to build the trip ID set
-- Combined with ZIP download overhead, this exceeds the 50s CPU budget
+### Agency-Specific Optimizations
+- TTC: PAGE_SIZE=5000 (vs default 10000) due to ~1.2M stop_times
+- MiWay: PAGE_SIZE=7500
+- Smaller DB batch sizes (50 services, 500 trips) for faster queries
+- CPU budget reduced to 45s to leave margin before platform limits
 
-## Proposed Solution: Server-Side Retry with Caching
+### Hour-Partitioned Stop Times
+- Each stop_times sync is partitioned by **day (0-6) × hour (0-27)** = 196 status entries per agency
+- Status file_type format: `stop_times_d{dayOffset}_h{hour}` (e.g. `stop_times_d0_h7`)
+- Empty hours recorded as `done` with `row_count: 0` (no dashboard gaps)
+- Pagination fallback within a single hour if >PAGE_SIZE rows matched
 
-### 1. Add retry_count column to track attempts
-```sql
-ALTER TABLE gtfs_sync_status ADD COLUMN retry_count integer DEFAULT 0;
+### Paginated Wrapper Flow
+```text
+paginated(agency=TTC, file_type=stop_times, day_offset=0)
+  → stop-times(TTC, d0, h0, p0) → WORKER_LIMIT → retry_count=1 → wait 1s → retry
+  → stop-times(TTC, d0, h0, p0) → done
+  → stop-times(TTC, d0, h1, p0) → done
+  ...
 ```
 
-### 2. Modify `gtfs-sync-paginated` to detect retriable errors and auto-retry (up to 5 times)
+### Admin Dashboard
+- Three-level drill-down: Agency > Day (d0-d6) > Hour (h0-h27)
+- Consecutive hours with same status collapsed into ranges (e.g. "h0-h3 Done")
+- Per-hour retrigger buttons for error/stale entries
+- Per-day retrigger via paginated wrapper (all 28 hours)
+- Sync Health cards show X/196 hours synced per agency
 
-When the inner stop-times function returns a 500 with `WORKER_LIMIT` or `CPU Time exceeded`:
-- Increment `retry_count`
-- If < 5: fire a new request to the same hour with exponential backoff
-- If >= 5: mark as permanent error
-
-### 3. Cache active trip IDs per agency+day
-
-Instead of recomputing `getActiveTripIds()` on every hour, compute once per day and store in a temporary table or the sync_status row:
-- First hour of day (h=0): compute and cache trip IDs
-- Subsequent hours: read from cache
-
-### 4. Reduce per-invocation work for TTC
-
-- **Pre-filter CSV on read**: Skip building full trip set; stream and match incrementally
-- **Smaller PAGE_SIZE for large agencies**: Reduce from 10k to 5k for TTC to stay under limits
-
-## Implementation Steps
-
-1. **DB migration**: Add `retry_count` column to `gtfs_sync_status`
-
-2. **Update `gtfs-sync-paginated/index.ts`**:
-   - After catching 500 errors, check if retriable (WORKER_LIMIT / CPU exceeded)
-   - Check current retry_count from status table
-   - If < 5: increment count, wait (2^retry × 1s), re-invoke same hour
-   - If >= 5: mark error, continue to next hour
-
-3. **Update `gtfs-sync-stop-times/index.ts`**:
-   - Add agency-specific PAGE_SIZE (TTC: 5000, others: 10000)
-   - Reduce `getActiveTripIds` DB batching from 1000 to 500 rows to reduce query complexity
-   - Log memory/CPU diagnostics
-
-4. **Frontend (optional enhancement)**: Show retry_count in admin UI for visibility
-
-## Technical Details
-
-```typescript
-// In gtfs-sync-paginated - after catching 500 error:
-const errBody = await res.text();
-const isRetriable = errBody.includes("WORKER_LIMIT") || 
-                     errBody.includes("CPU Time exceeded") ||
-                     errBody.includes("CPU budget");
-
-if (isRetriable) {
-  const { data: status } = await supabase
-    .from("gtfs_sync_status")
-    .select("retry_count")
-    .eq("agency_id", agencyId)
-    .eq("file_type", ft)
-    .single();
-  
-  const retryCount = (status?.retry_count ?? 0) + 1;
-  
-  if (retryCount <= 5) {
-    await supabase.from("gtfs_sync_status").upsert({
-      agency_id: agencyId,
-      file_type: ft,
-      status: "running",
-      retry_count: retryCount,
-      error_msg: `Retry ${retryCount}/5 after ${errBody.substring(0,50)}...`,
-    }, { onConflict: "agency_id,file_type" });
-    
-    // Exponential backoff: 1s, 2s, 4s, 8s, 16s
-    await new Promise(r => setTimeout(r, Math.pow(2, retryCount - 1) * 1000));
-    
-    // Re-invoke same hour
-    continue;
-  }
-}
-```
-
-This approach keeps the hour-partitioned UI you prefer while making TTC syncs resilient to transient resource limits.
-
+### Key Changes from v4
+- **Auto-retry**: Transient failures (WORKER_LIMIT, CPU exceeded) retry automatically
+- **Exponential backoff**: Prevents hammering the platform on resource contention
+- **Agency-specific tuning**: Smaller page sizes for TTC to fit within CPU limits
+- **Optimized DB queries**: Smaller batch sizes reduce per-invocation overhead
