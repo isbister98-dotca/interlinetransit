@@ -1,43 +1,45 @@
 
+# GTFS Schedule Data Integration — IMPLEMENTED
 
-## Plan: Uniform Hour-Partitioned Stop Times for All Agencies
+## Status: ✅ Complete (v4 - Hour-Partitioned Architecture)
 
-### Summary
-Apply hour-by-hour partitioning (hours 0-27) to **all agencies uniformly** — no size-based branching. Each invocation processes one agency + one day + one hour. Pagination remains as fallback within an hour. Empty hours get a "done" status with 0 rows (no gaps in the dashboard).
+All phases implemented:
+1. ✅ 14 database tables created (12 GTFS data + gtfs_feeds + gtfs_sync_status) with RLS
+2. ✅ 4 initial feeds seeded (GO, UP, MiWay, TTC)
+3. ✅ 8 edge functions deployed (agency, calendar, routes, stops, trips, shapes, transfers, stop-times)
+4. ✅ Admin page at /admin/gtfs with feed management + sync status
+5. ✅ **v4:** Hour-partitioned stop_times (hours 0-27 per day, uniform for all agencies)
+6. ✅ Paginated wrapper iterates hours sequentially with pagination fallback within each hour
 
-### Changes
+## Architecture (v4)
 
-**1. `supabase/functions/gtfs-sync-stop-times/index.ts`**
-- Add `hour` query param (0-27). When present, filter CSV rows by `parseInt(departure_time.split(":")[0]) === hour`
-- Remove `LARGE_TRIP_THRESHOLD` / dynamic `PAGE_SIZE` logic — use a single `PAGE_SIZE = 10000` for all agencies
-- Status `file_type` becomes `stop_times_d{dayOffset}_h{hour}` when hour is specified
-- On page 0, mark status "running"; when no more rows, mark "done" with row_count (even if 0)
-- Empty hours: if no rows matched after streaming, still write `status: "done", row_count: 0` — this ensures every hour has a status entry
-- Keep incremental row_count updates, CPU budget guard, batch upsert with retries
+### Hour-Partitioned Stop Times
+- Each stop_times sync is partitioned by **day (0-6) × hour (0-27)** = 196 status entries per agency
+- Status file_type format: `stop_times_d{dayOffset}_h{hour}` (e.g. `stop_times_d0_h7`)
+- Uniform PAGE_SIZE=10000 for all agencies (no dynamic sizing)
+- Empty hours recorded as `done` with `row_count: 0` (no dashboard gaps)
+- Pagination fallback within a single hour if >10k rows matched
 
-**2. `supabase/functions/gtfs-sync-paginated/index.ts`**
-- When `file_type=stop_times`, iterate hours 0-27 sequentially for the given day
-- For each hour: call stop-times with `hour=H&page=0`; if `hasMore`, paginate within that hour before moving to next
-- Add `start_hour` param (default 0) for continuation resume alongside existing `start_page`
-- Time budget continuation now fires with `start_hour` + `start_page`
+### Paginated Wrapper Flow
+```text
+paginated(agency=TTC, file_type=stop_times, day_offset=0)
+  → stop-times(agency=TTC, day_offset=0, hour=0, page=0)  → done
+  → stop-times(agency=TTC, day_offset=0, hour=1, page=0)  → done
+  ...
+  → stop-times(agency=TTC, day_offset=0, hour=7, page=0)  → hasMore → page=1 → done
+  ...
+  → stop-times(agency=TTC, day_offset=0, hour=27, page=0) → done
+```
 
-**3. `src/pages/AdminGtfsScreen.tsx`**
-- `StopTimesGroup` gets a third drill-down level: Day > Hours
-- Parse `stop_times_d{X}_h{Y}` statuses from the database
-- Expanding a day row shows hour rows (h0-h27)
-- Consecutive hours with same status collapsed into ranges (e.g. "h4-h8 Done 2,340")
-- Per-hour retrigger button for error/stale hours
-- `syncAllDays` and `retriggerDay` now call the paginated wrapper which handles hours internally
-- "Sync All" button calls paginated with `file_type=stop_times&day_offset=X` which iterates all 28 hours
-- Empty hours (0 rows, done) shown as subtle/dimmed rows when expanded
+### Admin Dashboard
+- Three-level drill-down: Agency > Day (d0-d6) > Hour (h0-h27)
+- Consecutive hours with same status collapsed into ranges (e.g. "h0-h3 Done")
+- Per-hour retrigger buttons for error/stale entries
+- Per-day retrigger via paginated wrapper (all 28 hours)
+- Sync Health cards show X/196 hours synced per agency
 
-### What stays the same
-- Calendar/service matching logic (future-date TTC fallback)
-- ZIP streaming, CSV parsing, batch upsert
-- Cancel All Syncs button
-- Cleanup function
-- No database migration needed (`file_type` is a text field)
-
-### Performance
-Every agency gets the same treatment: 7 days x 28 hours = 196 status entries per agency. Most off-peak hours (0-3, 25-27) will have 0 rows and complete in seconds. Peak hours (7-9, 16-18) may have 5-15k rows, well within a single invocation. Pagination only kicks in if an hour somehow exceeds 10k matched rows.
-
+### Key Changes from v3
+- **Hour partitioning**: Eliminates O(N²) re-scanning of entire ZIP per page
+- **Uniform treatment**: All agencies (GO, UP, MiWay, TTC) get identical hour-by-hour processing
+- **Granular status**: 196 entries per agency instead of 7, enabling precise error recovery
+- **Paginated wrapper**: Now iterates hours 0-27 with start_hour/start_page continuation
