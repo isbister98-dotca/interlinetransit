@@ -512,7 +512,7 @@ export default function AdminGtfsScreen() {
                         <tr key={s.id} className="border-b border-border last:border-0">
                           <td className="p-3 text-foreground">{s.agency_id}</td>
                           <td className="p-3 text-foreground font-mono text-xs">{s.file_type}</td>
-                          <td className="p-3"><StatusBadge status={s.status} /></td>
+                          <td className="p-3"><StatusBadge status={s.status} startedAt={s.started_at} /></td>
                           <td className="p-3 text-right text-foreground tabular-nums">
                             {s.row_count?.toLocaleString()}
                           </td>
