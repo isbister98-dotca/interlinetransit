@@ -20,6 +20,7 @@ const SYNC_FUNCTIONS = [
 ];
 
 const DAY_OFFSETS = [0, 1, 2, 3, 4, 5, 6];
+const HOURS = Array.from({ length: 28 }, (_, i) => i); // 0-27
 
 interface Feed {
   id: string;
@@ -41,7 +42,7 @@ interface SyncStatus {
   completed_at: string | null;
 }
 
-const STALE_THRESHOLD_MS = 10 * 60 * 1000; // 10 minutes
+const STALE_THRESHOLD_MS = 10 * 60 * 1000;
 
 function isStaleRunning(status: string, startedAt: string | null): boolean {
   if (status !== "running" || !startedAt) return false;
@@ -68,6 +69,46 @@ function StatusBadge({ status, startedAt }: { status: string; startedAt?: string
   }
 }
 
+/** Parse hour statuses from file_type like stop_times_d0_h6 */
+function parseHourFileType(ft: string): { day: number; hour: number } | null {
+  const m = ft.match(/^stop_times_d(\d+)_h(\d+)$/);
+  if (!m) return null;
+  return { day: parseInt(m[1]), hour: parseInt(m[2]) };
+}
+
+/** Collapse consecutive hours with same status into ranges */
+interface HourRange {
+  startHour: number;
+  endHour: number;
+  status: string;
+  totalRows: number;
+  statuses: SyncStatus[];
+}
+
+function collapseHourRanges(hourStatuses: (SyncStatus | null)[]): HourRange[] {
+  const ranges: HourRange[] = [];
+  let current: HourRange | null = null;
+
+  for (let h = 0; h < hourStatuses.length; h++) {
+    const s = hourStatuses[h];
+    const effectiveStatus = s
+      ? isStaleRunning(s.status, s.started_at) ? "stale" : s.status
+      : "pending";
+
+    if (current && current.status === effectiveStatus && effectiveStatus !== "error" && effectiveStatus !== "running" && effectiveStatus !== "stale") {
+      // Extend current range for done/pending
+      current.endHour = h;
+      current.totalRows += s?.row_count || 0;
+      if (s) current.statuses.push(s);
+    } else {
+      current = { startHour: h, endHour: h, status: effectiveStatus, totalRows: s?.row_count || 0, statuses: s ? [s] : [] };
+      ranges.push(current);
+    }
+  }
+
+  return ranges;
+}
+
 function StopTimesGroup({
   statuses,
   agencyId,
@@ -75,6 +116,8 @@ function StopTimesGroup({
   retriggeringDays,
   onSyncAllDays,
   syncingAllDays,
+  onRetriggerHour,
+  retriggeringHours,
 }: {
   statuses: SyncStatus[];
   agencyId: string;
@@ -82,48 +125,69 @@ function StopTimesGroup({
   retriggeringDays: Set<string>;
   onSyncAllDays: (agencyId: string) => void;
   syncingAllDays: boolean;
+  onRetriggerHour: (agencyId: string, dayOffset: number, hour: number) => void;
+  retriggeringHours: Set<string>;
 }) {
-  const [expanded, setExpanded] = useState(false);
-  const dayStatuses = DAY_OFFSETS.map(d => statuses.find(s => s.file_type === `stop_times_d${d}`) ?? null);
-  const cleanupStatus = statuses.find(s => s.file_type === "stop_times_cleanup") ?? null;
-  const allStatuses = [...dayStatuses.filter(Boolean), cleanupStatus].filter(Boolean) as SyncStatus[];
+  const [expandedDays, setExpandedDays] = useState<Set<number>>(new Set());
+  const [mainExpanded, setMainExpanded] = useState(false);
 
-  const hasStale = allStatuses.some(s => isStaleRunning(s.status, s.started_at));
-  const hasError = allStatuses.some(s => s.status === "error");
-  const overallStatus = hasStale
-    ? "stale"
-    : hasError
-    ? "error"
-    : allStatuses.some(s => s.status === "running")
-    ? "running"
-    : allStatuses.length > 0 && allStatuses.every(s => s.status === "done")
-    ? "done"
+  const cleanupStatus = statuses.find(s => s.file_type === "stop_times_cleanup") ?? null;
+
+  // Build day -> hour status map
+  const dayHourMap: Record<number, (SyncStatus | null)[]> = {};
+  for (const d of DAY_OFFSETS) {
+    dayHourMap[d] = HOURS.map(h => statuses.find(s => s.file_type === `stop_times_d${d}_h${h}`) ?? null);
+  }
+
+  // Also check for legacy stop_times_d{X} entries (old format)
+  const legacyDayStatuses = DAY_OFFSETS.map(d => statuses.find(s => s.file_type === `stop_times_d${d}`) ?? null);
+
+  // Compute per-day aggregates from hour statuses
+  const dayAggregates = DAY_OFFSETS.map(d => {
+    const hourEntries = dayHourMap[d].filter(Boolean) as SyncStatus[];
+    // If no hour entries exist, fall back to legacy
+    if (hourEntries.length === 0 && legacyDayStatuses[d]) {
+      return { status: legacyDayStatuses[d]!.status, rows: legacyDayStatuses[d]!.row_count || 0, hasHours: false, started_at: legacyDayStatuses[d]!.started_at };
+    }
+    if (hourEntries.length === 0) return { status: "pending", rows: 0, hasHours: false, started_at: null };
+
+    const hasStale = hourEntries.some(s => isStaleRunning(s.status, s.started_at));
+    const hasError = hourEntries.some(s => s.status === "error");
+    const hasRunning = hourEntries.some(s => s.status === "running" && !isStaleRunning(s.status, s.started_at));
+    const allDone = hourEntries.length === 28 && hourEntries.every(s => s.status === "done");
+    const rows = hourEntries.reduce((a, s) => a + (s.row_count || 0), 0);
+    const status = hasStale ? "stale" : hasError ? "error" : hasRunning ? "running" : allDone ? "done" : "pending";
+    return { status, rows, hasHours: true, started_at: hourEntries.find(s => s.started_at)?.started_at ?? null };
+  });
+
+  const allStatuses = [...dayAggregates.map(d => d.status), cleanupStatus?.status].filter(Boolean) as string[];
+  const overallStatus = allStatuses.some(s => s === "stale") ? "stale"
+    : allStatuses.some(s => s === "error") ? "error"
+    : allStatuses.some(s => s === "running") ? "running"
+    : allStatuses.every(s => s === "done") && allStatuses.length > 0 ? "done"
     : "pending";
 
-  // Exclude cleanup from totalRows — cleanup tracks *deleted* rows, not data
-  const dataStatuses = allStatuses.filter(s => s.file_type !== "stop_times_cleanup");
-  const totalRows = dataStatuses.reduce((acc, s) => acc + (s.row_count || 0), 0);
-  const lastCompleted = allStatuses
-    .filter(s => s.completed_at)
-    .sort((a, b) => new Date(b.completed_at!).getTime() - new Date(a.completed_at!).getTime())[0];
-
+  const totalRows = dayAggregates.reduce((a, d) => a + d.rows, 0);
   const dayLabels = ["Today", "Tomorrow", "+2d", "+3d", "+4d", "+5d", "+6d"];
-  const daysNeedingSync = DAY_OFFSETS.filter(i => {
-    const s = dayStatuses[i];
-    return !s || s.status === "error" || isStaleRunning(s.status, s.started_at);
-  });
+
+  const toggleDay = (d: number) => {
+    setExpandedDays(prev => {
+      const n = new Set(prev);
+      n.has(d) ? n.delete(d) : n.add(d);
+      return n;
+    });
+  };
 
   return (
     <>
       <tr
         className="border-b border-border cursor-pointer hover:bg-muted/30 transition-colors"
-        onClick={() => setExpanded(e => !e)}
+        onClick={() => setMainExpanded(e => !e)}
       >
         <td className="p-3 text-foreground font-medium">{agencyId}</td>
         <td className="p-3 font-mono text-xs text-foreground flex items-center gap-1">
-          {expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-          stop_times (7d)
-          {hasStale && <AlertTriangle className="h-3 w-3 text-warning ml-1" />}
+          {mainExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+          stop_times (7d × 28h)
         </td>
         <td className="p-3">
           <div className="flex items-center gap-2">
@@ -134,75 +198,114 @@ function StopTimesGroup({
             ) : (
               <StatusBadge status={overallStatus} />
             )}
-            {(daysNeedingSync.length > 0 || overallStatus !== "done") && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-6 px-2 text-xs"
-                onClick={(e) => { e.stopPropagation(); onSyncAllDays(agencyId); }}
-                disabled={syncingAllDays}
-                title={`Sync all ${daysNeedingSync.length} missing/stale days sequentially`}
-              >
-                {syncingAllDays ? (
-                  <Loader2 className="h-3 w-3 animate-spin mr-1" />
-                ) : (
-                  <RefreshCw className="h-3 w-3 mr-1" />
-                )}
-                Sync All
-              </Button>
-            )}
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-6 px-2 text-xs"
+              onClick={(e) => { e.stopPropagation(); onSyncAllDays(agencyId); }}
+              disabled={syncingAllDays}
+            >
+              {syncingAllDays ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <RefreshCw className="h-3 w-3 mr-1" />}
+              Sync All
+            </Button>
           </div>
         </td>
         <td className="p-3 text-right text-foreground tabular-nums">{totalRows.toLocaleString()}</td>
-        <td className="p-3 text-muted-foreground text-xs">
-          {lastCompleted?.completed_at ? new Date(lastCompleted.completed_at).toLocaleString() : "—"}
-        </td>
+        <td className="p-3 text-muted-foreground text-xs">—</td>
       </tr>
 
-      {expanded && dayStatuses.map((s, i) => {
-        const stale = s ? isStaleRunning(s.status, s.started_at) : false;
-        const retriggering = retriggeringDays.has(`${agencyId}-d${i}`);
+      {mainExpanded && DAY_OFFSETS.map(d => {
+        const agg = dayAggregates[d];
+        const dayExpanded = expandedDays.has(d);
+        const retriggering = retriggeringDays.has(`${agencyId}-d${d}`);
+        const hourRanges = collapseHourRanges(dayHourMap[d]);
+
         return (
-          <tr key={`d${i}`} className={`border-b border-border/50 ${stale ? "bg-warning/5" : "bg-muted/10"}`}>
-            <td className="p-2 pl-6 text-muted-foreground text-xs"></td>
-            <td className="p-2 font-mono text-xs text-muted-foreground">
-              <span className={i === 0 ? "text-primary font-semibold" : ""}>
-                {dayLabels[i]} (d{i})
-              </span>
-            </td>
-            <td className="p-2">
-              <div className="flex items-center gap-2">
-                {s ? <StatusBadge status={s.status} startedAt={s.started_at} /> : <Badge variant="outline">—</Badge>}
-                {(stale || !s || (s && s.status === "error")) && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-6 px-2 text-xs"
-                    onClick={(e) => { e.stopPropagation(); onRetriggerDay(agencyId, i); }}
-                    disabled={retriggering}
-                  >
-                    {retriggering ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
-                  </Button>
-                )}
-              </div>
-            </td>
-            <td className="p-2 text-right text-muted-foreground text-xs tabular-nums">
-              {s?.row_count?.toLocaleString() ?? "—"}
-            </td>
-            <td className="p-2 text-muted-foreground text-xs">
-              {s?.completed_at ? new Date(s.completed_at).toLocaleString() : "—"}
-              {s?.error_msg && <p className="text-destructive mt-0.5">{s.error_msg}</p>}
-              {stale && s?.started_at && (
-                <p className="text-warning mt-0.5">
-                  Started {Math.round((Date.now() - new Date(s.started_at).getTime()) / 60000)}m ago — likely timed out
-                </p>
-              )}
-            </td>
-          </tr>
+          <>
+            <tr
+              key={`day-${d}`}
+              className={`border-b border-border/50 cursor-pointer hover:bg-muted/20 ${agg.status === "stale" || agg.status === "error" ? "bg-warning/5" : "bg-muted/10"}`}
+              onClick={() => agg.hasHours && toggleDay(d)}
+            >
+              <td className="p-2 pl-6 text-muted-foreground text-xs"></td>
+              <td className="p-2 font-mono text-xs text-muted-foreground flex items-center gap-1">
+                {agg.hasHours && (dayExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />)}
+                <span className={d === 0 ? "text-primary font-semibold" : ""}>
+                  {dayLabels[d]} (d{d})
+                </span>
+              </td>
+              <td className="p-2">
+                <div className="flex items-center gap-2">
+                  <StatusBadge status={agg.status === "stale" ? "running" : agg.status} startedAt={agg.status === "stale" ? agg.started_at : undefined} />
+                  {(agg.status === "stale" || agg.status === "error" || agg.status === "pending") && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 px-2 text-xs"
+                      onClick={(e) => { e.stopPropagation(); onRetriggerDay(agencyId, d); }}
+                      disabled={retriggering}
+                    >
+                      {retriggering ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
+                    </Button>
+                  )}
+                </div>
+              </td>
+              <td className="p-2 text-right text-muted-foreground text-xs tabular-nums">
+                {agg.rows > 0 ? agg.rows.toLocaleString() : "—"}
+              </td>
+              <td className="p-2 text-muted-foreground text-xs">
+                {agg.hasHours
+                  ? `${dayHourMap[d].filter(Boolean).length}/28 hours`
+                  : "—"}
+              </td>
+            </tr>
+
+            {dayExpanded && hourRanges.map((range, ri) => {
+              const label = range.startHour === range.endHour
+                ? `h${range.startHour}`
+                : `h${range.startHour}–h${range.endHour}`;
+              const isActionable = range.status === "error" || range.status === "stale";
+              const dimmed = range.status === "done" && range.totalRows === 0;
+
+              return (
+                <tr key={`h-${d}-${ri}`} className={`border-b border-border/30 ${dimmed ? "opacity-40" : ""} bg-muted/5`}>
+                  <td className="p-1 pl-10 text-muted-foreground text-xs"></td>
+                  <td className="p-1 font-mono text-xs text-muted-foreground pl-4">{label}</td>
+                  <td className="p-1">
+                    <div className="flex items-center gap-1">
+                      <StatusBadge
+                        status={range.status === "stale" ? "running" : range.status}
+                        startedAt={range.status === "stale" ? range.statuses[0]?.started_at : undefined}
+                      />
+                      {isActionable && range.startHour === range.endHour && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-5 px-1 text-xs"
+                          onClick={(e) => { e.stopPropagation(); onRetriggerHour(agencyId, d, range.startHour); }}
+                          disabled={retriggeringHours.has(`${agencyId}-d${d}-h${range.startHour}`)}
+                        >
+                          {retriggeringHours.has(`${agencyId}-d${d}-h${range.startHour}`) ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
+                        </Button>
+                      )}
+                    </div>
+                  </td>
+                  <td className="p-1 text-right text-muted-foreground text-xs tabular-nums">
+                    {range.totalRows > 0 ? range.totalRows.toLocaleString() : "—"}
+                  </td>
+                  <td className="p-1 text-muted-foreground text-xs">
+                    {range.statuses.length > 0 && range.statuses[0]?.error_msg && (
+                      <span className="text-destructive">{range.statuses[0].error_msg}</span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </>
         );
       })}
 
-      {expanded && (
+      {mainExpanded && (
         <tr className="border-b border-border/50 bg-muted/10">
           <td className="p-2 pl-6 text-muted-foreground text-xs"></td>
           <td className="p-2 font-mono text-xs text-muted-foreground">cleanup (GC)</td>
@@ -229,6 +332,7 @@ export default function AdminGtfsScreen() {
   const [newFeedUrl, setNewFeedUrl] = useState("");
   const [syncing, setSyncing] = useState<Record<string, boolean>>({});
   const [retriggeringDays, setRetriggeringDays] = useState<Set<string>>(new Set());
+  const [retriggeringHours, setRetriggeringHours] = useState<Set<string>>(new Set());
   const [syncingAllDays, setSyncingAllDays] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(true);
   const { toast } = useToast();
@@ -277,7 +381,6 @@ export default function AdminGtfsScreen() {
     fetchData();
   };
 
-  const PAGINATED_FUNCTIONS = ["gtfs-sync-shapes", "gtfs-sync-stop-times"];
   const projectId = import.meta.env.VITE_SUPABASE_PROJECT_ID;
   const anonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 
@@ -300,13 +403,7 @@ export default function AdminGtfsScreen() {
     for (const fn of SYNC_FUNCTIONS) {
       try {
         if (fn === "gtfs-sync-shapes") {
-          let page = 0;
-          while (true) {
-            const result = await callFunction(fn, agencyId, `&page=${page}`);
-            const agencyResult = result?.results?.[agencyId];
-            if (!agencyResult?.hasMore) break;
-            page++;
-          }
+          await callFunction("gtfs-sync-paginated", agencyId, "&file_type=shapes");
         } else {
           await callFunction(fn, agencyId);
         }
@@ -315,26 +412,17 @@ export default function AdminGtfsScreen() {
       }
     }
 
-    // 2. Sync stop_times per day: d0 (today) first, then d1–d6
+    // 2. Sync stop_times via paginated wrapper (handles hours internally)
     for (const dayOffset of DAY_OFFSETS) {
       try {
-        let page = 0;
-        while (true) {
-          const result = await callFunction(
-            "gtfs-sync-stop-times",
-            agencyId,
-            `&page=${page}&day_offset=${dayOffset}`
-          );
-          const agencyResult = result?.results?.[agencyId];
-          if (!agencyResult?.hasMore) break;
-          page++;
-        }
+        await callFunction("gtfs-sync-paginated", agencyId, `&file_type=stop_times&day_offset=${dayOffset}`);
+        await new Promise(r => setTimeout(r, 3000));
       } catch (e) {
         console.error(`Error syncing stop_times d${dayOffset} for ${agencyId}:`, e);
       }
     }
 
-    // 3. Cleanup (garbage collection)
+    // 3. Cleanup
     try {
       await callFunction("gtfs-sync-stop-times-cleanup", agencyId);
     } catch (e) {
@@ -351,18 +439,7 @@ export default function AdminGtfsScreen() {
 
     for (const dayOffset of DAY_OFFSETS) {
       try {
-        let page = 0;
-        while (true) {
-          const result = await callFunction(
-            "gtfs-sync-stop-times",
-            agencyId,
-            `&page=${page}&day_offset=${dayOffset}`
-          );
-          const agencyResult = result?.results?.[agencyId];
-          if (!agencyResult?.hasMore) break;
-          page++;
-        }
-        // 3s delay between days to avoid concurrency issues
+        await callFunction("gtfs-sync-paginated", agencyId, `&file_type=stop_times&day_offset=${dayOffset}`);
         await new Promise(r => setTimeout(r, 3000));
       } catch (e) {
         console.error(`Error syncing stop_times d${dayOffset} for ${agencyId}:`, e);
@@ -382,29 +459,17 @@ export default function AdminGtfsScreen() {
 
   const syncAllDays = async (agencyId: string) => {
     setSyncingAllDays(prev => ({ ...prev, [agencyId]: true }));
-    
+
     for (const dayOffset of DAY_OFFSETS) {
       try {
-        let page = 0;
-        while (true) {
-          const result = await callFunction(
-            "gtfs-sync-stop-times",
-            agencyId,
-            `&page=${page}&day_offset=${dayOffset}`
-          );
-          const agencyResult = result?.results?.[agencyId];
-          if (!agencyResult?.hasMore) break;
-          page++;
-        }
-        // 5s delay between days to prevent concurrency stalls
+        await callFunction("gtfs-sync-paginated", agencyId, `&file_type=stop_times&day_offset=${dayOffset}`);
         await new Promise(r => setTimeout(r, 5000));
-        fetchData(); // Refresh status after each day
+        fetchData();
       } catch (e) {
         console.error(`Error syncing ${agencyId} d${dayOffset}:`, e);
       }
     }
 
-    // Run cleanup after all days
     try {
       await callFunction("gtfs-sync-stop-times-cleanup", agencyId);
     } catch (e) {
@@ -420,17 +485,7 @@ export default function AdminGtfsScreen() {
     const key = `${agencyId}-d${dayOffset}`;
     setRetriggeringDays(prev => new Set(prev).add(key));
     try {
-      let page = 0;
-      while (true) {
-        const result = await callFunction(
-          "gtfs-sync-stop-times",
-          agencyId,
-          `&page=${page}&day_offset=${dayOffset}`
-        );
-        const agencyResult = result?.results?.[agencyId];
-        if (!agencyResult?.hasMore) break;
-        page++;
-      }
+      await callFunction("gtfs-sync-paginated", agencyId, `&file_type=stop_times&day_offset=${dayOffset}`);
       toast({ title: `Re-synced ${agencyId} d${dayOffset}` });
     } catch (e) {
       console.error(`Error retriggering ${agencyId} d${dayOffset}:`, e);
@@ -440,7 +495,20 @@ export default function AdminGtfsScreen() {
     fetchData();
   };
 
-  // Group statuses by agency for the stop_times section
+  const retriggerHour = async (agencyId: string, dayOffset: number, hour: number) => {
+    const key = `${agencyId}-d${dayOffset}-h${hour}`;
+    setRetriggeringHours(prev => new Set(prev).add(key));
+    try {
+      await callFunction("gtfs-sync-stop-times", agencyId, `&day_offset=${dayOffset}&hour=${hour}&page=0`);
+      toast({ title: `Re-synced ${agencyId} d${dayOffset} h${hour}` });
+    } catch (e) {
+      console.error(`Error retriggering ${agencyId} d${dayOffset} h${hour}:`, e);
+      toast({ title: "Re-trigger failed", description: String(e), variant: "destructive" });
+    }
+    setRetriggeringHours(prev => { const n = new Set(prev); n.delete(key); return n; });
+    fetchData();
+  };
+
   const getAgencyStatuses = (agencyId: string) =>
     syncStatuses.filter(s => s.agency_id === agencyId);
 
@@ -542,7 +610,7 @@ export default function AdminGtfsScreen() {
                   size="sm"
                   onClick={() => syncStopTimesOnly(feed.agency_id)}
                   disabled={syncing[feed.agency_id]}
-                  title="Sync stop_times only (7 days)"
+                  title="Sync stop_times only (7 days × 28 hours)"
                 >
                   {syncing[feed.agency_id] ? (
                     <Loader2 className="h-4 w-4 animate-spin" />
@@ -588,14 +656,14 @@ export default function AdminGtfsScreen() {
               const isRunning = statuses.some(s => s.status === "running" && !isStaleRunning(s.status, s.started_at));
               const totalRows = statuses.reduce((acc, s) => acc + (s.row_count || 0), 0);
 
-              const stopTimesDone = statuses.filter(s => s.file_type.startsWith("stop_times_d") && s.status === "done");
-              const stopTimesTotal = DAY_OFFSETS.length;
+              const hourEntries = statuses.filter(s => /^stop_times_d\d+_h\d+$/.test(s.file_type) && s.status === "done");
+              const totalHours = DAY_OFFSETS.length * HOURS.length; // 196
 
               const timeSinceSync = lastDone?.completed_at
                 ? Date.now() - new Date(lastDone.completed_at).getTime()
                 : null;
               const hoursAgo = timeSinceSync ? Math.round(timeSinceSync / 3600000) : null;
-              const isStaleSync = hoursAgo !== null && hoursAgo > 26; // >26h means missed daily sync
+              const isStaleSync = hoursAgo !== null && hoursAgo > 26;
 
               let borderColor = "border-border";
               let Icon = CheckCircle2;
@@ -628,7 +696,7 @@ export default function AdminGtfsScreen() {
                     <div className="flex items-center justify-between text-xs">
                       <span className="text-muted-foreground">Stop times</span>
                       <span className="text-foreground">
-                        {stopTimesDone.length}/{stopTimesTotal} days synced
+                        {hourEntries.length}/{totalHours} hours synced
                       </span>
                     </div>
                     {hasErrors && (
@@ -673,7 +741,6 @@ export default function AdminGtfsScreen() {
                 <tbody>
                   {allAgenciesInStatus.map(agencyId => (
                     <>
-                      {/* Regular file types (non-stop_times) */}
                       {regularStatuses(agencyId).map(s => (
                         <tr key={s.id} className="border-b border-border last:border-0">
                           <td className="p-3 text-foreground">{s.agency_id}</td>
@@ -691,7 +758,6 @@ export default function AdminGtfsScreen() {
                         </tr>
                       ))}
 
-                      {/* Stop Times grouped row (expandable) */}
                       {stopTimesStatuses(agencyId).length > 0 && (
                         <StopTimesGroup
                           key={`${agencyId}-stoptimes`}
@@ -701,6 +767,8 @@ export default function AdminGtfsScreen() {
                           retriggeringDays={retriggeringDays}
                           onSyncAllDays={syncAllDays}
                           syncingAllDays={!!syncingAllDays[agencyId]}
+                          onRetriggerHour={retriggerHour}
+                          retriggeringHours={retriggeringHours}
                         />
                       )}
                     </>
