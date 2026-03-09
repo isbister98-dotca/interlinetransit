@@ -1,0 +1,32 @@
+name: GTFS Nightly Update
+
+on:
+  # Runs every night at 3:00 AM Toronto time (8:00 AM UTC)
+  schedule:
+    - cron: "0 8 * * *"
+
+  # Lets you manually trigger this from the GitHub Actions tab
+  # useful for testing or forcing a refresh
+  workflow_dispatch:
+
+jobs:
+  update-stop-times:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: npm install @supabase/supabase-js node-fetch adm-zip csv-parse
+
+      - name: Run GTFS stop_times loader
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: node scripts/load-gtfs-stop-times.mjs
