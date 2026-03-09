@@ -531,6 +531,8 @@ export default function AdminGtfsScreen() {
                           key={`${agencyId}-stoptimes`}
                           agencyId={agencyId}
                           statuses={stopTimesStatuses(agencyId)}
+                          onRetriggerDay={retriggerDay}
+                          retriggeringDays={retriggeringDays}
                         />
                       )}
                     </>
