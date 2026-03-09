@@ -45,6 +45,23 @@ async function getAllActiveServiceIds(supabase: any, agencyId: string): Promise<
     }
   }
 
+  // Fallback: if no services match strict date bounds, use day-of-week only
+  if (serviceIds.size === 0) {
+    console.log(`[${agencyId}] No strict-date services for 7-day window, falling back to day-of-week`);
+    const uniqueDays = new Set(days.map(d => dayNames[d.dayIdx]));
+    for (const dayCol of uniqueDays) {
+      const { data: fallbackCals } = await supabase
+        .from("gtfs_calendar")
+        .select("*")
+        .eq("agency_id", agencyId)
+        .eq(dayCol, true);
+
+      for (const cal of fallbackCals || []) {
+        serviceIds.add(cal.service_id);
+      }
+    }
+  }
+
   const { data: exceptions } = await supabase
     .from("gtfs_calendar_dates")
     .select("*")
