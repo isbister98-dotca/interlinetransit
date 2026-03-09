@@ -14,14 +14,14 @@ async function getActiveServiceIds(supabase: any, agencyId: string): Promise<Set
   const serviceIds = new Set<string>();
   const dayNames = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
   const days: { dateStr: string; dayIdx: number }[] = [];
-  for (let i = 0; i < 7; i++) {
+  for (let i = 0; i < 14; i++) {
     const d = new Date(now);
     d.setDate(d.getDate() + i);
     days.push({ dateStr: d.toISOString().slice(0, 10).replace(/-/g, ""), dayIdx: d.getDay() });
   }
   const { data: calendars } = await supabase
     .from("gtfs_calendar").select("*").eq("agency_id", agencyId)
-    .lte("start_date", days[6].dateStr).gte("end_date", days[0].dateStr);
+    .lte("start_date", days[13].dateStr).gte("end_date", days[0].dateStr);
   for (const cal of calendars || []) {
     for (const day of days) {
       if (cal.start_date <= day.dateStr && cal.end_date >= day.dateStr && cal[dayNames[day.dayIdx]])
