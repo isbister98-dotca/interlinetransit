@@ -1,0 +1,1 @@
+CREATE POLICY "Allow public update gtfs_sync_status" ON public.gtfs_sync_status FOR UPDATE USING (true) WITH CHECK (true);
