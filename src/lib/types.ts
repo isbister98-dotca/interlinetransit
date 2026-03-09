@@ -16,6 +16,7 @@ export interface Vehicle {
   speed?: number;
   occupancy?: "LOW" | "MEDIUM" | "HIGH" | "FULL";
   timestamp: number;
+  tripId?: string;
 }
 
 export interface Departure {
