@@ -216,6 +216,20 @@ Deno.serve(async (req) => {
 
     const serviceIds = new Set((calendarRows || []).map((r: any) => r.service_id));
 
+    // Fallback: if no services match strict date bounds, use day-of-week only
+    if (serviceIds.size === 0) {
+      console.log(`[${agencyId}] No strict-date services for ${dateStr}, falling back to day-of-week (${dayName})`);
+      const { data: fallbackCals } = await supabase
+        .from("gtfs_calendar")
+        .select("service_id")
+        .eq("agency_id", agencyId)
+        .eq(dayName, true);
+
+      for (const cal of fallbackCals || []) {
+        serviceIds.add(cal.service_id);
+      }
+    }
+
     // Check calendar_dates for additions/removals
     const { data: dateExceptions } = await supabase
       .from("gtfs_calendar_dates")
