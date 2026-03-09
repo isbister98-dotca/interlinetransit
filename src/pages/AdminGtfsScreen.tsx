@@ -495,7 +495,7 @@ export default function AdminGtfsScreen() {
     <div className="min-h-screen bg-background p-4 pb-24 max-w-4xl mx-auto">
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-3">
-          <Button variant="ghost" size="icon" onClick={() => navigate("/map")}>
+          <Button variant="ghost" size="icon" onClick={() => navigate("/")}> 
             <ArrowLeft className="h-5 w-5" />
           </Button>
           <h1 className="text-xl font-semibold text-foreground">GTFS Feed Admin</h1>
