@@ -10,6 +10,7 @@ All phases implemented:
 4. ✅ Admin page at /admin/gtfs with feed management + sync status
 5. ✅ Hour-partitioned stop_times (hours 0-27 per day, uniform for all agencies)
 6. ✅ **v5:** Server-side auto-retry with exponential backoff (up to 5 retries)
+7. ✅ **v6:** Dual cache architecture (trip IDs + ZIP files) to eliminate redundant work
 
 ## Architecture (v5)
 
