@@ -375,6 +375,7 @@ export type Database = {
           error_msg: string | null
           file_type: string
           id: string
+          retry_count: number | null
           row_count: number | null
           started_at: string | null
           status: string
@@ -385,6 +386,7 @@ export type Database = {
           error_msg?: string | null
           file_type: string
           id?: string
+          retry_count?: number | null
           row_count?: number | null
           started_at?: string | null
           status?: string
@@ -395,6 +397,7 @@ export type Database = {
           error_msg?: string | null
           file_type?: string
           id?: string
+          retry_count?: number | null
           row_count?: number | null
           started_at?: string | null
           status?: string
