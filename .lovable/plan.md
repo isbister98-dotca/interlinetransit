@@ -1,45 +1,22 @@
 
-# GTFS Schedule Data Integration — IMPLEMENTED
 
-## Status: ✅ Complete (v4 - Hour-Partitioned Architecture)
+## Fix: Make All Days Expandable + Remove Legacy Fallback + Clean Up Stale Data
 
-All phases implemented:
-1. ✅ 14 database tables created (12 GTFS data + gtfs_feeds + gtfs_sync_status) with RLS
-2. ✅ 4 initial feeds seeded (GO, UP, MiWay, TTC)
-3. ✅ 8 edge functions deployed (agency, calendar, routes, stops, trips, shapes, transfers, stop-times)
-4. ✅ Admin page at /admin/gtfs with feed management + sync status
-5. ✅ **v4:** Hour-partitioned stop_times (hours 0-27 per day, uniform for all agencies)
-6. ✅ Paginated wrapper iterates hours sequentially with pagination fallback within each hour
+### Problem
+The `hasHours` flag gates both the click handler (line 228) and the chevron (line 232), so days without hour-based status entries can't be expanded. The collapsing logic also groups consecutive hours with the same status into ranges (e.g. "h1-h6"), which is confusing — each hour should be its own row.
 
-## Architecture (v4)
+### Changes
 
-### Hour-Partitioned Stop Times
-- Each stop_times sync is partitioned by **day (0-6) × hour (0-27)** = 196 status entries per agency
-- Status file_type format: `stop_times_d{dayOffset}_h{hour}` (e.g. `stop_times_d0_h7`)
-- Uniform PAGE_SIZE=10000 for all agencies (no dynamic sizing)
-- Empty hours recorded as `done` with `row_count: 0` (no dashboard gaps)
-- Pagination fallback within a single hour if >10k rows matched
+**1. `src/pages/AdminGtfsScreen.tsx`**
 
-### Paginated Wrapper Flow
-```text
-paginated(agency=TTC, file_type=stop_times, day_offset=0)
-  → stop-times(agency=TTC, day_offset=0, hour=0, page=0)  → done
-  → stop-times(agency=TTC, day_offset=0, hour=1, page=0)  → done
-  ...
-  → stop-times(agency=TTC, day_offset=0, hour=7, page=0)  → hasMore → page=1 → done
-  ...
-  → stop-times(agency=TTC, day_offset=0, hour=27, page=0) → done
-```
+- **Remove legacy fallback** (lines 142-151): Delete the `legacyDayStatuses` variable and the fallback branch in `dayAggregates`. Days with no hour entries show as "pending" with 0 rows.
+- **Always allow day expansion** (line 228): Remove `agg.hasHours &&` from `onClick` handler.
+- **Always show chevron** (line 232): Remove `agg.hasHours &&` condition — always render the chevron arrow.
+- **Remove `collapseHourRanges`** (lines 88-110): Delete entirely. Replace with a simple flat list of all 28 hours (h0-h27), each as its own row — no collapsing.
+- **Update hour rendering** (lines 263-303): Instead of iterating `hourRanges`, iterate `HOURS` (0-27) directly, rendering one row per hour with its status (from `dayHourMap[d][h]` or "pending" if null).
+- **Remove `hasHours` from aggregate** (line 152, 160): No longer needed.
+- **Update "hours" column** (lines 257-259): Always show `${doneCount}/28 hours` regardless of `hasHours`.
 
-### Admin Dashboard
-- Three-level drill-down: Agency > Day (d0-d6) > Hour (h0-h27)
-- Consecutive hours with same status collapsed into ranges (e.g. "h0-h3 Done")
-- Per-hour retrigger buttons for error/stale entries
-- Per-day retrigger via paginated wrapper (all 28 hours)
-- Sync Health cards show X/196 hours synced per agency
+**2. Database cleanup**
+- Delete legacy `gtfs_sync_status` rows: `DELETE FROM gtfs_sync_status WHERE file_type ~ '^stop_times_d\d+$'`
 
-### Key Changes from v3
-- **Hour partitioning**: Eliminates O(N²) re-scanning of entire ZIP per page
-- **Uniform treatment**: All agencies (GO, UP, MiWay, TTC) get identical hour-by-hour processing
-- **Granular status**: 196 entries per agency instead of 7, enabling precise error recovery
-- **Paginated wrapper**: Now iterates hours 0-27 with start_hour/start_page continuation
