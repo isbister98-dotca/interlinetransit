@@ -323,6 +323,8 @@ Deno.serve(async (req) => {
             idxPickup = headers.indexOf("pickup_type");
             idxDropoff = headers.indexOf("drop_off_type");
             idxTimepoint = headers.indexOf("timepoint");
+            idxStopHeadsign = headers.indexOf("stop_headsign");
+            idxShapeDist = headers.indexOf("shape_dist_traveled");
 
             if (idxTripId < 0 || idxStopId < 0 || idxSeq < 0) {
               throw new Error("stop_times.txt missing required columns");
