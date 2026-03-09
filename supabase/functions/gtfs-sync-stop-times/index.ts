@@ -416,7 +416,10 @@ Deno.serve(async (req) => {
         let batch: any[] = [];
         let totalRows = 0;
 
-        await streamProcessZip(feed.feed_url, (line: string) => {
+        // Get ZIP stream (cached or download)
+        const zipStream = await getZipStream(feed.feed_url, agencyId, serviceDate, supabase);
+        
+        await streamProcessZip(zipStream, (line: string) => {
           if (hasMore) return false;
 
           // CPU budget guard
