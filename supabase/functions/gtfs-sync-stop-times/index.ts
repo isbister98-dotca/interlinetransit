@@ -18,6 +18,53 @@ const BATCH_SIZE = 200;
 const CPU_BUDGET_MS = 45_000; // Reduced from 50s to leave margin
 
 /**
+ * Get cached or compute active trip IDs for agency+date
+ */
+async function getCachedTripIds(
+  supabase: any,
+  agencyId: string,
+  serviceDate: string,
+  dayOffset: number
+): Promise<Set<string>> {
+  // Try cache first
+  const { data: cached } = await supabase
+    .from("gtfs_trip_cache")
+    .select("trip_ids")
+    .eq("agency_id", agencyId)
+    .eq("service_date", serviceDate)
+    .single();
+  
+  if (cached?.trip_ids && Array.isArray(cached.trip_ids) && cached.trip_ids.length > 0) {
+    console.log(`[${agencyId}] Using cached trip IDs for ${serviceDate}: ${cached.trip_ids.length} trips`);
+    return new Set(cached.trip_ids);
+  }
+  
+  // Cache miss - compute
+  console.log(`[${agencyId}] Cache miss, computing trip IDs for ${serviceDate}`);
+  const serviceIds = await getActiveServiceIds(supabase, agencyId, dayOffset);
+  
+  if (serviceIds.size === 0) {
+    console.log(`[${agencyId}] No active services for ${serviceDate}`);
+    return new Set();
+  }
+  
+  const tripIds = await getActiveTripIds(supabase, agencyId, serviceIds);
+  
+  // Cache for next time
+  if (tripIds.size > 0) {
+    await supabase.from("gtfs_trip_cache").upsert({
+      agency_id: agencyId,
+      service_date: serviceDate,
+      trip_ids: Array.from(tripIds),
+      created_at: new Date().toISOString(),
+    }, { onConflict: "agency_id,service_date" });
+    console.log(`[${agencyId}] Cached ${tripIds.size} trip IDs for ${serviceDate}`);
+  }
+  
+  return tripIds;
+}
+
+/**
  * Get active service IDs for a SINGLE day (today + day_offset).
  */
 async function getActiveServiceIds(
