@@ -18,6 +18,7 @@ const MAX_HOUR = 27;
  *   - day_offset: 0–6 (only for stop_times)
  *   - start_page: resume page (default 0)
  *   - start_hour: resume hour (default 0, only for stop_times)
+ *   - single_hour: if "true", only process start_hour (for per-hour retrigger)
  */
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
@@ -29,6 +30,7 @@ Deno.serve(async (req) => {
     const dayOffset = url.searchParams.get("day_offset") ?? "0";
     const startPage = parseInt(url.searchParams.get("start_page") ?? "0");
     const startHour = parseInt(url.searchParams.get("start_hour") ?? "0");
+    const singleHour = url.searchParams.get("single_hour") === "true";
 
     if (!agencyId || !fileType) {
       return new Response(
