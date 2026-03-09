@@ -369,6 +369,11 @@ Deno.serve(async (req) => {
       // Get agency-specific page size
       const PAGE_SIZE = AGENCY_PAGE_SIZES[agencyId] ?? DEFAULT_PAGE_SIZE;
 
+      // Compute service date string (YYYYMMDD format)
+      const d = new Date();
+      d.setDate(d.getDate() + dayOffset);
+      const serviceDate = d.toISOString().slice(0, 10).replace(/-/g, "");
+
       if (page === 0) {
         await supabase.from("gtfs_sync_status").upsert({
           agency_id: agencyId,
@@ -382,26 +387,8 @@ Deno.serve(async (req) => {
       }
 
       try {
-        const serviceIds = await getActiveServiceIds(supabase, agencyId, dayOffset);
-
-        if (serviceIds.size === 0) {
-          await supabase.from("gtfs_sync_status").upsert({
-            agency_id: agencyId,
-            file_type: fileType,
-            status: "done",
-            row_count: 0,
-            completed_at: new Date().toISOString(),
-            error_msg: `No active services for day_offset=${dayOffset}`,
-          }, { onConflict: "agency_id,file_type" });
-          results[agencyId] = { ok: true, rows: 0, hasMore: false, note: "No active services" };
-          continue;
-        }
-
-        const tripFetchStart = Date.now();
-        const activeTripIds = await getActiveTripIds(supabase, agencyId, serviceIds);
-        const tripFetchMs = Date.now() - tripFetchStart;
-        
-        console.log(`[${agencyId}] d${dayOffset} h=${targetHour ?? "all"} page=${page}: ${serviceIds.size} services, ${activeTripIds.size} trips (fetched in ${tripFetchMs}ms)`);
+        // Use cached trip IDs (or compute if cache miss)
+        const activeTripIds = await getCachedTripIds(supabase, agencyId, serviceDate, dayOffset);
 
         if (activeTripIds.size === 0) {
           await supabase.from("gtfs_sync_status").upsert({
