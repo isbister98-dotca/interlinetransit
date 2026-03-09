@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -76,38 +76,6 @@ function parseHourFileType(ft: string): { day: number; hour: number } | null {
   return { day: parseInt(m[1]), hour: parseInt(m[2]) };
 }
 
-/** Collapse consecutive hours with same status into ranges */
-interface HourRange {
-  startHour: number;
-  endHour: number;
-  status: string;
-  totalRows: number;
-  statuses: SyncStatus[];
-}
-
-function collapseHourRanges(hourStatuses: (SyncStatus | null)[]): HourRange[] {
-  const ranges: HourRange[] = [];
-  let current: HourRange | null = null;
-
-  for (let h = 0; h < hourStatuses.length; h++) {
-    const s = hourStatuses[h];
-    const effectiveStatus = s
-      ? isStaleRunning(s.status, s.started_at) ? "stale" : s.status
-      : "pending";
-
-    if (current && current.status === effectiveStatus && effectiveStatus !== "error" && effectiveStatus !== "running" && effectiveStatus !== "stale") {
-      // Extend current range for done/pending
-      current.endHour = h;
-      current.totalRows += s?.row_count || 0;
-      if (s) current.statuses.push(s);
-    } else {
-      current = { startHour: h, endHour: h, status: effectiveStatus, totalRows: s?.row_count || 0, statuses: s ? [s] : [] };
-      ranges.push(current);
-    }
-  }
-
-  return ranges;
-}
 
 function StopTimesGroup({
   statuses,
@@ -139,25 +107,19 @@ function StopTimesGroup({
     dayHourMap[d] = HOURS.map(h => statuses.find(s => s.file_type === `stop_times_d${d}_h${h}`) ?? null);
   }
 
-  // Also check for legacy stop_times_d{X} entries (old format)
-  const legacyDayStatuses = DAY_OFFSETS.map(d => statuses.find(s => s.file_type === `stop_times_d${d}`) ?? null);
-
   // Compute per-day aggregates from hour statuses
   const dayAggregates = DAY_OFFSETS.map(d => {
     const hourEntries = dayHourMap[d].filter(Boolean) as SyncStatus[];
-    // If no hour entries exist, fall back to legacy
-    if (hourEntries.length === 0 && legacyDayStatuses[d]) {
-      return { status: legacyDayStatuses[d]!.status, rows: legacyDayStatuses[d]!.row_count || 0, hasHours: false, started_at: legacyDayStatuses[d]!.started_at };
-    }
-    if (hourEntries.length === 0) return { status: "pending", rows: 0, hasHours: false, started_at: null };
+    if (hourEntries.length === 0) return { status: "pending", rows: 0, doneCount: 0, started_at: null };
 
     const hasStale = hourEntries.some(s => isStaleRunning(s.status, s.started_at));
     const hasError = hourEntries.some(s => s.status === "error");
     const hasRunning = hourEntries.some(s => s.status === "running" && !isStaleRunning(s.status, s.started_at));
-    const allDone = hourEntries.length === 28 && hourEntries.every(s => s.status === "done");
+    const doneCount = hourEntries.filter(s => s.status === "done").length;
+    const allDone = doneCount === 28;
     const rows = hourEntries.reduce((a, s) => a + (s.row_count || 0), 0);
     const status = hasStale ? "stale" : hasError ? "error" : hasRunning ? "running" : allDone ? "done" : "pending";
-    return { status, rows, hasHours: true, started_at: hourEntries.find(s => s.started_at)?.started_at ?? null };
+    return { status, rows, doneCount, started_at: hourEntries.find(s => s.started_at)?.started_at ?? null };
   });
 
   const allStatuses = [...dayAggregates.map(d => d.status), cleanupStatus?.status].filter(Boolean) as string[];
@@ -218,18 +180,16 @@ function StopTimesGroup({
         const agg = dayAggregates[d];
         const dayExpanded = expandedDays.has(d);
         const retriggering = retriggeringDays.has(`${agencyId}-d${d}`);
-        const hourRanges = collapseHourRanges(dayHourMap[d]);
 
         return (
-          <>
+          <React.Fragment key={`day-${d}`}>
             <tr
-              key={`day-${d}`}
               className={`border-b border-border/50 cursor-pointer hover:bg-muted/20 ${agg.status === "stale" || agg.status === "error" ? "bg-warning/5" : "bg-muted/10"}`}
-              onClick={() => agg.hasHours && toggleDay(d)}
+              onClick={() => toggleDay(d)}
             >
               <td className="p-2 pl-6 text-muted-foreground text-xs"></td>
               <td className="p-2 font-mono text-xs text-muted-foreground flex items-center gap-1">
-                {agg.hasHours && (dayExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />)}
+                {dayExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
                 <span className={d === 0 ? "text-primary font-semibold" : ""}>
                   {dayLabels[d]} (d{d})
                 </span>
@@ -254,54 +214,53 @@ function StopTimesGroup({
                 {agg.rows > 0 ? agg.rows.toLocaleString() : "—"}
               </td>
               <td className="p-2 text-muted-foreground text-xs">
-                {agg.hasHours
-                  ? `${dayHourMap[d].filter(Boolean).length}/28 hours`
-                  : "—"}
+                {`${agg.doneCount}/28 hours`}
               </td>
             </tr>
 
-            {dayExpanded && hourRanges.map((range, ri) => {
-              const label = range.startHour === range.endHour
-                ? `h${range.startHour}`
-                : `h${range.startHour}–h${range.endHour}`;
-              const isActionable = range.status === "error" || range.status === "stale";
-              const dimmed = range.status === "done" && range.totalRows === 0;
+            {dayExpanded && HOURS.map(h => {
+              const s = dayHourMap[d][h];
+              const effectiveStatus = s
+                ? isStaleRunning(s.status, s.started_at) ? "stale" : s.status
+                : "pending";
+              const isActionable = effectiveStatus === "error" || effectiveStatus === "stale" || effectiveStatus === "pending";
+              const dimmed = effectiveStatus === "done" && (s?.row_count || 0) === 0;
 
               return (
-                <tr key={`h-${d}-${ri}`} className={`border-b border-border/30 ${dimmed ? "opacity-40" : ""} bg-muted/5`}>
+                <tr key={`h-${d}-${h}`} className={`border-b border-border/30 ${dimmed ? "opacity-40" : ""} bg-muted/5`}>
                   <td className="p-1 pl-10 text-muted-foreground text-xs"></td>
-                  <td className="p-1 font-mono text-xs text-muted-foreground pl-4">{label}</td>
+                  <td className="p-1 font-mono text-xs text-muted-foreground pl-4">h{h}</td>
                   <td className="p-1">
                     <div className="flex items-center gap-1">
                       <StatusBadge
-                        status={range.status === "stale" ? "running" : range.status}
-                        startedAt={range.status === "stale" ? range.statuses[0]?.started_at : undefined}
+                        status={effectiveStatus === "stale" ? "running" : effectiveStatus}
+                        startedAt={effectiveStatus === "stale" ? s?.started_at : undefined}
                       />
-                      {isActionable && range.startHour === range.endHour && (
+                      {isActionable && (
                         <Button
                           variant="ghost"
                           size="sm"
                           className="h-5 px-1 text-xs"
-                          onClick={(e) => { e.stopPropagation(); onRetriggerHour(agencyId, d, range.startHour); }}
-                          disabled={retriggeringHours.has(`${agencyId}-d${d}-h${range.startHour}`)}
+                          onClick={(e) => { e.stopPropagation(); onRetriggerHour(agencyId, d, h); }}
+                          disabled={retriggeringHours.has(`${agencyId}-d${d}-h${h}`)}
                         >
-                          {retriggeringHours.has(`${agencyId}-d${d}-h${range.startHour}`) ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
+                          {retriggeringHours.has(`${agencyId}-d${d}-h${h}`) ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
                         </Button>
                       )}
                     </div>
                   </td>
                   <td className="p-1 text-right text-muted-foreground text-xs tabular-nums">
-                    {range.totalRows > 0 ? range.totalRows.toLocaleString() : "—"}
+                    {(s?.row_count || 0) > 0 ? s!.row_count.toLocaleString() : "—"}
                   </td>
                   <td className="p-1 text-muted-foreground text-xs">
-                    {range.statuses.length > 0 && range.statuses[0]?.error_msg && (
-                      <span className="text-destructive">{range.statuses[0].error_msg}</span>
+                    {s?.error_msg && (
+                      <span className="text-destructive">{s.error_msg}</span>
                     )}
                   </td>
                 </tr>
               );
             })}
-          </>
+          </React.Fragment>
         );
       })}
 
