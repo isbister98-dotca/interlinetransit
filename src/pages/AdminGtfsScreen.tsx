@@ -349,6 +349,30 @@ export default function AdminGtfsScreen() {
     fetchData();
   };
 
+  const retriggerDay = async (agencyId: string, dayOffset: number) => {
+    const key = `${agencyId}-d${dayOffset}`;
+    setRetriggeringDays(prev => new Set(prev).add(key));
+    try {
+      let page = 0;
+      while (true) {
+        const result = await callFunction(
+          "gtfs-sync-stop-times",
+          agencyId,
+          `&page=${page}&day_offset=${dayOffset}`
+        );
+        const agencyResult = result?.results?.[agencyId];
+        if (!agencyResult?.hasMore) break;
+        page++;
+      }
+      toast({ title: `Re-synced ${agencyId} d${dayOffset}` });
+    } catch (e) {
+      console.error(`Error retriggering ${agencyId} d${dayOffset}:`, e);
+      toast({ title: "Re-trigger failed", description: String(e), variant: "destructive" });
+    }
+    setRetriggeringDays(prev => { const n = new Set(prev); n.delete(key); return n; });
+    fetchData();
+  };
+
   // Group statuses by agency for the stop_times section
   const getAgencyStatuses = (agencyId: string) =>
     syncStatuses.filter(s => s.agency_id === agencyId);
