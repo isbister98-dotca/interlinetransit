@@ -10,9 +10,7 @@ const corsHeaders = {
  * Query params:
  *   - agency_id (required)
  *   - file_type: "shapes" | "stop_times" (required)
- * 
- * This function calls the underlying gtfs-sync-shapes or gtfs-sync-stop-times
- * function repeatedly (page=0, page=1, ...) until hasMore is false.
+ *   - day_offset: 0–6 (only used when file_type=stop_times)
  */
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
@@ -21,6 +19,7 @@ Deno.serve(async (req) => {
     const url = new URL(req.url);
     const agencyId = url.searchParams.get("agency_id");
     const fileType = url.searchParams.get("file_type");
+    const dayOffset = url.searchParams.get("day_offset") ?? "0";
 
     if (!agencyId || !fileType) {
       return new Response(
@@ -47,11 +46,15 @@ Deno.serve(async (req) => {
 
     let page = 0;
     let totalRows = 0;
-    const maxPages = 100; // safety limit
+    const maxPages = 100;
 
     while (page < maxPages) {
-      const fnUrl = `${supabaseUrl}/functions/v1/${functionName}?agency_id=${encodeURIComponent(agencyId)}&page=${page}`;
-      
+      // Build URL — forward day_offset for stop_times
+      let fnUrl = `${supabaseUrl}/functions/v1/${functionName}?agency_id=${encodeURIComponent(agencyId)}&page=${page}`;
+      if (fileType === "stop_times") {
+        fnUrl += `&day_offset=${encodeURIComponent(dayOffset)}`;
+      }
+
       const res = await fetch(fnUrl, {
         method: "POST",
         headers: {
@@ -62,11 +65,11 @@ Deno.serve(async (req) => {
 
       if (!res.ok) {
         const errText = await res.text();
-        // Update sync status with error
         const supabase = createClient(supabaseUrl, serviceRoleKey);
+        const ft = fileType === "stop_times" ? `stop_times_d${dayOffset}` : fileType;
         await supabase.from("gtfs_sync_status").upsert({
           agency_id: agencyId,
-          file_type: fileType,
+          file_type: ft,
           status: "error",
           error_msg: `Page ${page} failed: ${res.status} - ${errText.substring(0, 200)}`,
           completed_at: new Date().toISOString(),
@@ -97,15 +100,13 @@ Deno.serve(async (req) => {
 
       totalRows += agencyResult.rows || 0;
 
-      if (!agencyResult.hasMore) {
-        break;
-      }
+      if (!agencyResult.hasMore) break;
 
       page++;
     }
 
     return new Response(
-      JSON.stringify({ ok: true, agency_id: agencyId, file_type: fileType, totalRows, pages: page + 1 }),
+      JSON.stringify({ ok: true, agency_id: agencyId, file_type: fileType, day_offset: dayOffset, totalRows, pages: page + 1 }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (e) {

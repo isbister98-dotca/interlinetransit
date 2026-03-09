@@ -6,7 +6,7 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
-import { ArrowLeft, Plus, Trash2, RefreshCw, Loader2 } from "lucide-react";
+import { ArrowLeft, Plus, Trash2, RefreshCw, Loader2, ChevronDown, ChevronRight } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 const SYNC_FUNCTIONS = [
@@ -17,8 +17,9 @@ const SYNC_FUNCTIONS = [
   "gtfs-sync-trips",
   "gtfs-sync-shapes",
   "gtfs-sync-transfers",
-  "gtfs-sync-stop-times",
 ];
+
+const DAY_OFFSETS = [0, 1, 2, 3, 4, 5, 6];
 
 interface Feed {
   id: string;
@@ -38,6 +39,104 @@ interface SyncStatus {
   error_msg: string | null;
   started_at: string | null;
   completed_at: string | null;
+}
+
+function StatusBadge({ status }: { status: string }) {
+  switch (status) {
+    case "done":
+      return <Badge className="bg-success/20 text-success border-success/30">Done</Badge>;
+    case "running":
+      return <Badge className="bg-info/20 text-info border-info/30">Running</Badge>;
+    case "error":
+      return <Badge className="bg-destructive/20 text-destructive border-destructive/30">Error</Badge>;
+    default:
+      return <Badge variant="outline">Pending</Badge>;
+  }
+}
+
+function StopTimesGroup({
+  statuses,
+  agencyId,
+}: {
+  statuses: SyncStatus[];
+  agencyId: string;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const dayStatuses = DAY_OFFSETS.map(d => statuses.find(s => s.file_type === `stop_times_d${d}`) ?? null);
+  const cleanupStatus = statuses.find(s => s.file_type === "stop_times_cleanup") ?? null;
+  const allStatuses = [...dayStatuses.filter(Boolean), cleanupStatus].filter(Boolean) as SyncStatus[];
+
+  const overallStatus =
+    allStatuses.some(s => s.status === "error")
+      ? "error"
+      : allStatuses.some(s => s.status === "running")
+      ? "running"
+      : allStatuses.length > 0 && allStatuses.every(s => s.status === "done")
+      ? "done"
+      : "pending";
+
+  const totalRows = allStatuses.reduce((acc, s) => acc + (s.row_count || 0), 0);
+  const lastCompleted = allStatuses
+    .filter(s => s.completed_at)
+    .sort((a, b) => new Date(b.completed_at!).getTime() - new Date(a.completed_at!).getTime())[0];
+
+  const dayLabels = ["Today", "Tomorrow", "+2d", "+3d", "+4d", "+5d", "+6d"];
+
+  return (
+    <>
+      <tr
+        className="border-b border-border cursor-pointer hover:bg-muted/30 transition-colors"
+        onClick={() => setExpanded(e => !e)}
+      >
+        <td className="p-3 text-foreground font-medium">{agencyId}</td>
+        <td className="p-3 font-mono text-xs text-foreground flex items-center gap-1">
+          {expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+          stop_times (7d)
+        </td>
+        <td className="p-3"><StatusBadge status={overallStatus} /></td>
+        <td className="p-3 text-right text-foreground tabular-nums">{totalRows.toLocaleString()}</td>
+        <td className="p-3 text-muted-foreground text-xs">
+          {lastCompleted?.completed_at ? new Date(lastCompleted.completed_at).toLocaleString() : "—"}
+        </td>
+      </tr>
+
+      {expanded && dayStatuses.map((s, i) => (
+        <tr key={`d${i}`} className="border-b border-border/50 bg-muted/10">
+          <td className="p-2 pl-6 text-muted-foreground text-xs"></td>
+          <td className="p-2 font-mono text-xs text-muted-foreground">
+            <span className={i === 0 ? "text-primary font-semibold" : ""}>
+              {dayLabels[i]} (d{i})
+            </span>
+          </td>
+          <td className="p-2">{s ? <StatusBadge status={s.status} /> : <Badge variant="outline">—</Badge>}</td>
+          <td className="p-2 text-right text-muted-foreground text-xs tabular-nums">
+            {s?.row_count?.toLocaleString() ?? "—"}
+          </td>
+          <td className="p-2 text-muted-foreground text-xs">
+            {s?.completed_at ? new Date(s.completed_at).toLocaleString() : "—"}
+            {s?.error_msg && <p className="text-destructive mt-0.5">{s.error_msg}</p>}
+          </td>
+        </tr>
+      ))}
+
+      {expanded && (
+        <tr className="border-b border-border/50 bg-muted/10">
+          <td className="p-2 pl-6 text-muted-foreground text-xs"></td>
+          <td className="p-2 font-mono text-xs text-muted-foreground">cleanup (GC)</td>
+          <td className="p-2">{cleanupStatus ? <StatusBadge status={cleanupStatus.status} /> : <Badge variant="outline">—</Badge>}</td>
+          <td className="p-2 text-right text-muted-foreground text-xs tabular-nums">
+            {cleanupStatus?.row_count?.toLocaleString() ?? "—"}
+          </td>
+          <td className="p-2 text-muted-foreground text-xs">
+            {cleanupStatus?.completed_at ? new Date(cleanupStatus.completed_at).toLocaleString() : "—"}
+            {cleanupStatus?.error_msg && (
+              <p className="text-destructive mt-0.5">{cleanupStatus.error_msg}</p>
+            )}
+          </td>
+        </tr>
+      )}
+    </>
+  );
 }
 
 export default function AdminGtfsScreen() {
@@ -94,19 +193,15 @@ export default function AdminGtfsScreen() {
   };
 
   const PAGINATED_FUNCTIONS = ["gtfs-sync-shapes", "gtfs-sync-stop-times"];
+  const projectId = import.meta.env.VITE_SUPABASE_PROJECT_ID;
+  const anonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 
-  const callFunction = async (fn: string, agencyId: string, page = 0): Promise<any> => {
-    const projectId = import.meta.env.VITE_SUPABASE_PROJECT_ID;
-    const anonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
-    const pageParam = PAGINATED_FUNCTIONS.includes(fn) ? `&page=${page}` : "";
+  const callFunction = async (fn: string, agencyId: string, extraParams = ""): Promise<any> => {
     const res = await fetch(
-      `https://${projectId}.supabase.co/functions/v1/${fn}?agency_id=${encodeURIComponent(agencyId)}${pageParam}`,
+      `https://${projectId}.supabase.co/functions/v1/${fn}?agency_id=${encodeURIComponent(agencyId)}${extraParams}`,
       {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${anonKey}`,
-        },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${anonKey}` },
       }
     );
     if (!res.ok) return null;
@@ -116,13 +211,13 @@ export default function AdminGtfsScreen() {
   const syncAgency = async (agencyId: string) => {
     setSyncing(prev => ({ ...prev, [agencyId]: true }));
 
+    // 1. Sync all non-stop_times functions
     for (const fn of SYNC_FUNCTIONS) {
       try {
-        if (PAGINATED_FUNCTIONS.includes(fn)) {
-          // Chain paginated calls until hasMore is false
+        if (fn === "gtfs-sync-shapes") {
           let page = 0;
           while (true) {
-            const result = await callFunction(fn, agencyId, page);
+            const result = await callFunction(fn, agencyId, `&page=${page}`);
             const agencyResult = result?.results?.[agencyId];
             if (!agencyResult?.hasMore) break;
             page++;
@@ -135,23 +230,51 @@ export default function AdminGtfsScreen() {
       }
     }
 
+    // 2. Sync stop_times per day: d0 (today) first, then d1–d6
+    for (const dayOffset of DAY_OFFSETS) {
+      try {
+        let page = 0;
+        while (true) {
+          const result = await callFunction(
+            "gtfs-sync-stop-times",
+            agencyId,
+            `&page=${page}&day_offset=${dayOffset}`
+          );
+          const agencyResult = result?.results?.[agencyId];
+          if (!agencyResult?.hasMore) break;
+          page++;
+        }
+      } catch (e) {
+        console.error(`Error syncing stop_times d${dayOffset} for ${agencyId}:`, e);
+      }
+    }
+
+    // 3. Cleanup (garbage collection)
+    try {
+      await callFunction("gtfs-sync-stop-times-cleanup", agencyId);
+    } catch (e) {
+      console.error(`Error in stop_times cleanup for ${agencyId}:`, e);
+    }
+
     setSyncing(prev => ({ ...prev, [agencyId]: false }));
-    toast({ title: `Sync triggered for ${agencyId}` });
+    toast({ title: `Sync complete for ${agencyId}` });
     fetchData();
   };
 
-  const statusBadge = (status: string) => {
-    switch (status) {
-      case "done":
-        return <Badge className="bg-success/20 text-success border-success/30">Done</Badge>;
-      case "running":
-        return <Badge className="bg-info/20 text-info border-info/30">Running</Badge>;
-      case "error":
-        return <Badge className="bg-destructive/20 text-destructive border-destructive/30">Error</Badge>;
-      default:
-        return <Badge variant="outline">Pending</Badge>;
-    }
-  };
+  // Group statuses by agency for the stop_times section
+  const getAgencyStatuses = (agencyId: string) =>
+    syncStatuses.filter(s => s.agency_id === agencyId);
+
+  const isStopTimesType = (fileType: string) =>
+    fileType.startsWith("stop_times");
+
+  const regularStatuses = (agencyId: string) =>
+    getAgencyStatuses(agencyId).filter(s => !isStopTimesType(s.file_type));
+
+  const stopTimesStatuses = (agencyId: string) =>
+    getAgencyStatuses(agencyId).filter(s => isStopTimesType(s.file_type));
+
+  const allAgenciesInStatus = [...new Set(syncStatuses.map(s => s.agency_id))].sort();
 
   if (loading) {
     return (
@@ -240,7 +363,7 @@ export default function AdminGtfsScreen() {
       {/* Sync Status */}
       <div className="space-y-3">
         <h2 className="text-sm font-medium text-muted-foreground">Sync Status</h2>
-        {syncStatuses.length === 0 ? (
+        {allAgenciesInStatus.length === 0 ? (
           <p className="text-sm text-muted-foreground">No sync data yet. Trigger a sync to see results.</p>
         ) : (
           <Card className="bg-card border-border overflow-hidden">
@@ -256,19 +379,35 @@ export default function AdminGtfsScreen() {
                   </tr>
                 </thead>
                 <tbody>
-                  {syncStatuses.map(s => (
-                    <tr key={s.id} className="border-b border-border last:border-0">
-                      <td className="p-3 text-foreground">{s.agency_id}</td>
-                      <td className="p-3 text-foreground font-mono text-xs">{s.file_type}</td>
-                      <td className="p-3">{statusBadge(s.status)}</td>
-                      <td className="p-3 text-right text-foreground tabular-nums">{s.row_count?.toLocaleString()}</td>
-                      <td className="p-3 text-muted-foreground text-xs">
-                        {s.completed_at ? new Date(s.completed_at).toLocaleString() : "—"}
-                        {s.error_msg && (
-                          <p className="text-destructive mt-1 text-xs">{s.error_msg}</p>
-                        )}
-                      </td>
-                    </tr>
+                  {allAgenciesInStatus.map(agencyId => (
+                    <>
+                      {/* Regular file types (non-stop_times) */}
+                      {regularStatuses(agencyId).map(s => (
+                        <tr key={s.id} className="border-b border-border last:border-0">
+                          <td className="p-3 text-foreground">{s.agency_id}</td>
+                          <td className="p-3 text-foreground font-mono text-xs">{s.file_type}</td>
+                          <td className="p-3"><StatusBadge status={s.status} /></td>
+                          <td className="p-3 text-right text-foreground tabular-nums">
+                            {s.row_count?.toLocaleString()}
+                          </td>
+                          <td className="p-3 text-muted-foreground text-xs">
+                            {s.completed_at ? new Date(s.completed_at).toLocaleString() : "—"}
+                            {s.error_msg && (
+                              <p className="text-destructive mt-1 text-xs">{s.error_msg}</p>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+
+                      {/* Stop Times grouped row (expandable) */}
+                      {stopTimesStatuses(agencyId).length > 0 && (
+                        <StopTimesGroup
+                          key={`${agencyId}-stoptimes`}
+                          agencyId={agencyId}
+                          statuses={stopTimesStatuses(agencyId)}
+                        />
+                      )}
+                    </>
                   ))}
                 </tbody>
               </table>
