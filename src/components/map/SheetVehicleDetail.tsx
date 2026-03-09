@@ -59,9 +59,16 @@ export function SheetVehicleDetail({ vehicle, onTrack, routeGeometry, routeLoadi
   const vehicleStopIdx = findNearestStopIndex(vehicle, stops);
   const destination = stops.length > 0 ? stops[stops.length - 1].name : bearingToDirection(vehicle.bearing);
 
+  let headsign = tripData?.trip_headsign;
+  if (headsign) {
+    // Remove route ID from the beginning of the headsign (e.g. "LW - Confederation GO" -> "Confederation GO")
+    const routePrefixRegex = new RegExp(`^${vehicle.routeId}\\s*[-:]?\\s*`, 'i');
+    headsign = headsign.replace(routePrefixRegex, '');
+  }
+
   // Build display label: prefer headsign, fallback to route_long_name
-  const displayLabel = tripData?.trip_headsign
-    ? `${vehicle.routeId} · ${tripData.trip_headsign}`
+  const displayLabel = headsign
+    ? `${vehicle.routeId} · ${headsign}`
     : routeShape?.route_long_name
     ? `${vehicle.routeId} · ${routeShape.route_long_name}`
     : vehicle.routeLabel;
