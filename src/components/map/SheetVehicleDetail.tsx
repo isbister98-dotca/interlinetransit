@@ -6,6 +6,8 @@ import type { Vehicle } from "@/lib/types";
 import type { RouteGeometry } from "@/lib/osm-api";
 import type { RouteShape } from "@/hooks/use-route-shapes";
 import { AGENCY_COLORS } from "@/lib/types";
+import useSWR from "swr";
+import { supabase } from "@/integrations/supabase/client";
 
 interface SheetVehicleDetailProps {
   vehicle: Vehicle;
@@ -40,12 +42,27 @@ export function SheetVehicleDetail({ vehicle, onTrack, routeGeometry, routeLoadi
   const agencyColor = AGENCY_COLORS[vehicle.agency];
   const speedDisplay = vehicle.speed != null ? `${vehicle.speed} km/h` : "N/A";
 
+  const { data: tripData } = useSWR(
+    vehicle.tripId ? ['trip', vehicle.tripId] : null,
+    async () => {
+      const { data, error } = await supabase
+        .from('gtfs_trips')
+        .select('trip_headsign')
+        .eq('trip_id', vehicle.tripId!)
+        .maybeSingle();
+      if (error) throw error;
+      return data;
+    }
+  );
+
   const stops = routeGeometry?.stops ?? [];
   const vehicleStopIdx = findNearestStopIndex(vehicle, stops);
   const destination = stops.length > 0 ? stops[stops.length - 1].name : bearingToDirection(vehicle.bearing);
 
-  // Build display label: prefer destination, fallback to route_long_name
-  const displayLabel = routeShape?.route_long_name
+  // Build display label: prefer headsign, fallback to route_long_name
+  const displayLabel = tripData?.trip_headsign
+    ? `${vehicle.routeId} · ${tripData.trip_headsign}`
+    : routeShape?.route_long_name
     ? `${vehicle.routeId} · ${routeShape.route_long_name}`
     : vehicle.routeLabel;
 
