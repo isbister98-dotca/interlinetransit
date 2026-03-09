@@ -300,6 +300,7 @@ Deno.serve(async (req) => {
 
         let idxTripId = -1, idxArrival = -1, idxDeparture = -1;
         let idxStopId = -1, idxSeq = -1, idxPickup = -1, idxDropoff = -1, idxTimepoint = -1;
+        let idxStopHeadsign = -1, idxShapeDist = -1;
         let headerParsed = false;
 
         const skipUntil = page * PAGE_SIZE;
