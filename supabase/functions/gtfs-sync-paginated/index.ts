@@ -143,10 +143,11 @@ Deno.serve(async (req) => {
                 completed_at: null,
               }, { onConflict: "agency_id,file_type" });
               
-              // Exponential backoff: 1s, 2s, 4s, 8s, 16s
-              const backoffMs = Math.pow(2, nextRetryCount - 1) * 1000;
-              console.log(`[${agencyId}] Retry ${nextRetryCount}/${MAX_RETRIES} for hour=${currentHour}, waiting ${backoffMs}ms`);
-              await new Promise(r => setTimeout(r, backoffMs));
+              // Exponential backoff with jitter to prevent thundering herd
+              const baseBackoffMs = Math.pow(2, nextRetryCount - 1) * 1000;
+              const jitteredBackoffMs = Math.round(baseBackoffMs * (0.5 + Math.random())); // 50-150% of base
+              console.log(`[${agencyId}] Retry ${nextRetryCount}/${MAX_RETRIES} for hour=${currentHour}, waiting ${jitteredBackoffMs}ms (base: ${baseBackoffMs}ms)`);
+              await new Promise(r => setTimeout(r, jitteredBackoffMs));
               
               // Retry same hour/page
               continue;
@@ -216,9 +217,10 @@ Deno.serve(async (req) => {
                 completed_at: null,
               }, { onConflict: "agency_id,file_type" });
               
-              const backoffMs = Math.pow(2, nextRetryCount - 1) * 1000;
-              console.log(`[${agencyId}] Retry ${nextRetryCount}/${MAX_RETRIES} for hour=${currentHour}, waiting ${backoffMs}ms`);
-              await new Promise(r => setTimeout(r, backoffMs));
+              const baseBackoffMs = Math.pow(2, nextRetryCount - 1) * 1000;
+              const jitteredBackoffMs = Math.round(baseBackoffMs * (0.5 + Math.random())); // 50-150% of base
+              console.log(`[${agencyId}] Retry ${nextRetryCount}/${MAX_RETRIES} for hour=${currentHour}, waiting ${jitteredBackoffMs}ms (base: ${baseBackoffMs}ms)`);
+              await new Promise(r => setTimeout(r, jitteredBackoffMs));
               continue;
             }
             
