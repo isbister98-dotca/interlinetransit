@@ -37,6 +37,20 @@ async function getActiveServiceIds(
     if (cal[dayNames[dayIdx]]) serviceIds.add(cal.service_id);
   }
 
+  // Fallback: if no services match strict date bounds, use day-of-week only
+  if (serviceIds.size === 0) {
+    console.log(`[${agencyId}] No strict-date services for ${dateStr}, falling back to day-of-week (${dayNames[dayIdx]})`);
+    const { data: fallbackCals } = await supabase
+      .from("gtfs_calendar")
+      .select("*")
+      .eq("agency_id", agencyId)
+      .eq(dayNames[dayIdx], true);
+
+    for (const cal of fallbackCals || []) {
+      serviceIds.add(cal.service_id);
+    }
+  }
+
   const { data: exceptions } = await supabase
     .from("gtfs_calendar_dates")
     .select("*")
