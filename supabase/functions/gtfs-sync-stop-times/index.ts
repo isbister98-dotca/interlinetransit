@@ -7,7 +7,7 @@ const corsHeaders = {
 };
 
 const PAGE_SIZE = 50000;
-const CSV_DECODE_CHUNK_BYTES = 256 * 1024;
+const CSV_DECODE_CHUNK_BYTES = 64 * 1024;
 
 async function getActiveServiceIds(supabase: any, agencyId: string): Promise<Set<string>> {
   const now = new Date();
