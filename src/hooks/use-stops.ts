@@ -133,7 +133,7 @@ export function useStopDepartures(stopId: string | null, agencyId: string | null
     key,
     fetchStopDepartures,
     {
-      refreshInterval: 15_000,
+      refreshInterval: 30_000,
       revalidateOnFocus: false,
       fallbackData: { departures: [], alerts: [], routes: [] },
     }
