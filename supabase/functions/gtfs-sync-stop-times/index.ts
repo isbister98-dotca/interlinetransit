@@ -8,7 +8,7 @@ const corsHeaders = {
 
 const DEFAULT_PAGE_SIZE = 30000;
 const LARGE_PAGE_SIZE = 10000;
-const LARGE_TRIP_THRESHOLD = 50000;
+const LARGE_TRIP_THRESHOLD = 25000;
 const BATCH_SIZE = 200;
 const CPU_BUDGET_MS = 35_000; // 35s safety margin under 50s edge function CPU limit
 
@@ -396,6 +396,15 @@ Deno.serve(async (req) => {
             }
             totalRows += chunk.length;
           }
+
+          // Incremental row_count update so dashboard shows progress
+          await supabase.from("gtfs_sync_status").upsert({
+            agency_id: agencyId,
+            file_type: fileType,
+            status: "running",
+            row_count: totalRows,
+            error_msg: null,
+          }, { onConflict: "agency_id,file_type" });
         }
 
         if (!headerParsed) throw new Error("stop_times.txt is empty");
