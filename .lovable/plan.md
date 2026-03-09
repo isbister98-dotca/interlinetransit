@@ -1,79 +1,121 @@
 
-# GTFS Schedule Data Integration — IMPLEMENTED
 
-## Status: ✅ Complete (v6 - Dual Cache Architecture)
+## What’s going on (why it still fails)
 
-All phases implemented:
-1. ✅ 14 database tables created (12 GTFS data + gtfs_feeds + gtfs_sync_status) with RLS
-2. ✅ 4 initial feeds seeded (GO, UP, MiWay, TTC)
-3. ✅ 8 edge functions deployed (agency, calendar, routes, stops, trips, shapes, transfers, stop-times)
-4. ✅ Admin page at /admin/gtfs with feed management + sync status
-5. ✅ Hour-partitioned stop_times (hours 0-27 per day, uniform for all agencies)
-6. ✅ **v5:** Server-side auto-retry with exponential backoff (up to 5 retries)
-7. ✅ **v6:** Dual cache architecture (trip IDs + ZIP files) to eliminate redundant work
+### 1) “Backend vs frontend” won’t change the outcome
+The GTFS sync already runs as a **server-side backend function**. The admin UI just *triggers* it.  
+So if `gtfs-sync-stop-times` is crashing with **“Memory limit exceeded”**, it will crash no matter where it’s triggered from.
 
-## Architecture (v6)
+### 2) The failure is now clearly identified in logs
+Your backend logs show `gtfs-sync-stop-times` repeatedly hitting:
 
-### Dual Cache System (NEW)
+- `Memory limit exceeded`
+- right after: `Cache miss, downloading ZIP...`
 
-**Trip ID Cache (`gtfs_trip_cache` table)**
-- Stores active trip IDs per agency+service_date (YYYYMMDD)
-- First invocation per day: computes trip IDs (~10s) and caches to DB
-- Subsequent invocations: reads from cache in <500ms
-- **Savings**: ~9 seconds per hour/page after first invocation
+That points to a **memory blow-up during ZIP caching** (not during DB upserts).
 
-**ZIP Cache (`gtfs-zip-cache` Storage bucket)**
-- First invocation per day: downloads ZIP from agency URL, uploads to Storage (async)
-- Subsequent invocations: reads ZIP from Storage instead of remote URL
-- **Savings**: ~5-10 seconds per hour/page after first invocation
-- Cache invalidated daily (new service_date = new ZIP)
+### 3) Trip cache currently isn’t actually caching (DB confirms it)
+DB query of `gtfs_trip_cache` returns **zero rows** even though logs claim “Cached 39451 trip IDs…”.
 
-**Combined benefit**: Up to 15-20 seconds saved per invocation = more CPU headroom for processing peak hours
+From the diff + current function code, there are two concrete reasons:
 
-### Auto-Retry System (v5)
-- `retry_count` column in `gtfs_sync_status` tracks attempts per hour
-- Retriable errors: `WORKER_LIMIT`, `CPU Time exceeded`, `CPU budget`, `memory`
-- Exponential backoff: 1s, 2s, 4s, 8s, 16s between retries
-- After 5 failed retries, marks as permanent error and moves to next hour
-- Successful completion resets `retry_count` to 0
+- `gtfs_trip_cache.day_offset` is still **NOT NULL**, but the code upserts **without `day_offset`** → upsert fails.
+- the code does **not check** the upsert error → it prints “Cached …” even when the write failed.
 
-### Agency-Specific Optimizations (v6 Updated)
-- **TTC**: PAGE_SIZE=3000 (reduced from 5000) due to ~1.2M stop_times + dual cache overhead
-- **MiWay**: PAGE_SIZE=7500
-- Smaller DB batch sizes (50 services, 500 trips) for faster queries
-- CPU budget reduced to 45s to leave margin before platform limits
+So right now:
+- you pay the “compute trip IDs” cost repeatedly, and
+- ZIP caching is attempting work that blows memory.
 
-### Hour-Partitioned Stop Times
-- Each stop_times sync is partitioned by **day (0-6) × hour (0-27)** = 196 status entries per agency
-- Status file_type format: `stop_times_d{dayOffset}_h{hour}` (e.g. `stop_times_d0_h7`)
-- Empty hours recorded as `done` with `row_count: 0` (no dashboard gaps)
-- Pagination fallback within a single hour if >PAGE_SIZE rows matched
+## Why it “worked once before”
+It likely “worked” in the scenario where:
+- the ZIP was already cached for that exact `service_date` (so no cache miss / no upload attempt), or
+- the code at that time wasn’t trying to convert the ZIP stream into a Blob.
 
-### Paginated Wrapper Flow
-```text
-paginated(agency=TTC, file_type=stop_times, day_offset=0)
-  → stop-times(TTC, d0, h0, p0) 
-    → getCachedTripIds(TTC, 20260309) → CACHE MISS → compute + cache 39k trip IDs
-    → getZipStream(TTC, 20260309) → CACHE MISS → download ZIP, upload to Storage async
-    → process hour=0 → done
-  → stop-times(TTC, d0, h1, p0)
-    → getCachedTripIds(TTC, 20260309) → CACHE HIT (500ms)
-    → getZipStream(TTC, 20260309) → CACHE HIT from Storage (3s)
-    → process hour=1 → done
-  ...
+Once you hit a day/hour that is a cache miss, the function tries to cache the ZIP using:
+
+```ts
+const blob = await new Response(cacheStream).blob();
 ```
 
-### Admin Dashboard
-- Three-level drill-down: Agency > Day (d0-d6) > Hour (h0-h27)
-- Consecutive hours with same status collapsed into ranges (e.g. "h0-h3 Done")
-- Per-hour retrigger buttons for error/stale entries
-- Per-day retrigger via paginated wrapper (all 28 hours)
-- Sync Health cards show X/196 hours synced per agency
+That buffers the entire TTC ZIP into memory and triggers the edge runtime’s memory kill.
 
-### Key Changes from v5
-- **Dual cache**: Trip IDs cached in DB, ZIP files cached in Storage (gtfs-zip-cache bucket)
-- **Trip ID cache**: `gtfs_trip_cache` table keyed by agency_id + service_date (YYYYMMDD)
-- **ZIP cache**: Storage bucket with path `{agency_id}/{service_date}.zip`
-- **TTC page size**: Reduced to 3000 to account for cache overhead and ensure peak hours complete
-- **Cache invalidation**: Daily via service_date key (auto-clears on new day)
-- **Memory management**: ZIP downloaded once per day, streamed from Storage for subsequent hours
+---
+
+## Plan: Make TTC stop_times sync actually feasible (v7)
+
+### A) Fix trip ID cache so it truly persists (and fails loudly if it can’t)
+**Goal:** stop recomputing TTC’s ~39k trip IDs every invocation.
+
+1) **Code change** (`gtfs-sync-stop-times/index.ts`)
+- Include `day_offset` in the `gtfs_trip_cache` upsert payload.
+- Capture and log the upsert `{ error }`. Only print “Cached …” when the upsert succeeded.
+
+2) **DB migration**
+- Add an index for faster reads:
+  - `(agency_id, service_date)`
+- (Optional) If we decide `day_offset` is redundant, we can make it nullable or drop it later, but first we’ll simply write it correctly.
+
+### B) Replace ZIP caching with true streaming (no Blob, no buffering)
+**Goal:** avoid “Memory limit exceeded” while still caching the ZIP.
+
+1) **Stop using** `supabase.storage.download()` / `.upload(blob)` for TTC ZIP caching in this function.
+2) Implement Storage caching via **direct HTTP + streams**:
+- Cache hit:
+  - `GET {SUPABASE_URL}/storage/v1/object/gtfs-zip-cache/{agencyId}/{serviceDate}.zip`
+  - return `res.body` directly as `ReadableStream<Uint8Array>`
+- Cache miss:
+  - `fetch(feedUrl)` and `tee()` the response body:
+    - one stream goes to unzip processing
+    - the other stream is uploaded to Storage using `fetch(..., { body: uploadStream })`
+  - IMPORTANT: do not await a `.blob()` at any point.
+
+3) **Avoid concurrent duplicate uploads**
+- Only attempt the Storage upload when `page===0 && hour===0`.
+- For other hours, if cache is missing:
+  - either stream from remote **without trying to cache**, or
+  - poll storage for a short time (optional) before falling back to remote.
+
+### C) Increase cache bucket file size limit (TTC ZIP can exceed 100MB)
+Current bucket limit is **100MB**. That may be too small for TTC and would make caching fail even after streaming is fixed.
+
+**DB migration:**
+- bump `storage.buckets.file_size_limit` for `gtfs-zip-cache` to e.g. **300MB**.
+
+### D) Fix the storage RLS policy (security + correctness)
+Your migration added:
+
+- `CREATE POLICY ... ON storage.objects FOR ALL USING (bucket_id='gtfs-zip-cache') ...`
+
+Because it has no `TO ...`, it applies to `public` by default, which is overly permissive.
+
+**DB migration:**
+- Drop that policy and replace with a restricted one:
+  - either `TO service_role` only, or
+  - remove entirely if the backend key bypasses RLS in your environment.
+  
+We’ll choose the safest approach: explicitly restrict.
+
+### E) (Optional but recommended) Fix the noisy Admin UI console warning
+This doesn’t affect the backend sync, but it’s polluting your console while debugging:
+- Convert `Badge` to `React.forwardRef` so `StatusBadge` can pass refs without warnings.
+
+---
+
+## How we’ll verify the fix (fast, objective checks)
+
+1) Trigger TTC stop_times **hour=0 page=0**:
+- Expect log: “Cached ZIP to storage” (or at least upload attempt status)
+- Expect **no** “Memory limit exceeded”
+
+2) Trigger hour=1:
+- Expect log: “Using cached ZIP from storage”
+- Expect log: “Using cached trip IDs …”
+- DB: `gtfs_trip_cache` should now contain TTC rows
+
+3) Confirm the admin table starts showing real progress instead of retry loops caused by immediate crashes.
+
+---
+
+## If it STILL fails after v7
+Then the remaining issue is no longer “overhead” (trip set + zip download), it’s that “scan stop_times.txt for each hour” is too expensive for TTC even with caches. At that point we’d move to a bigger architectural change (pre-splitting or pre-indexing stop_times once per day), but we should not jump there until the memory-kill + broken cache are fixed because those are currently hard blockers.
+
