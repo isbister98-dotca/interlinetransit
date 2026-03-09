@@ -239,12 +239,16 @@ Deno.serve(async (req) => {
     const serviceIdArr = Array.from(serviceIds);
 
     // Get trips for active services at this stop
+    const windowEnd = secondsToTimeStr(currentSeconds + 3 * 3600);
     const { data: stopTimes } = await supabase
       .from("gtfs_stop_times")
       .select("trip_id, departure_time, arrival_time, stop_sequence")
       .eq("agency_id", agencyId)
       .eq("stop_id", stopId)
-      .order("departure_time", { ascending: true });
+      .gte("departure_time", secondsToTimeStr(currentSeconds))
+      .lte("departure_time", windowEnd)
+      .order("departure_time", { ascending: true })
+      .limit(100);
 
     if (!stopTimes || stopTimes.length === 0) {
       return new Response(JSON.stringify({ departures: [], alerts: [], routes: [] }), {

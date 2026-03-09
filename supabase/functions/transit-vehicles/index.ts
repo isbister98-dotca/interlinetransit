@@ -252,14 +252,9 @@ Deno.serve(async (req) => {
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, serviceRoleKey);
 
-    // Run 4 fetch cycles at 0s, 15s, 30s, 45s within one minute
-    const allResults = [];
-    for (let i = 0; i < 4; i++) {
-      if (i > 0) await new Promise((r) => setTimeout(r, 15_000));
-      const result = await fetchAndCache(supabase);
-      allResults.push(result);
-      console.log(`Cycle ${i}: ${result.vehicleCount} vehicles`);
-    }
+    const result = await fetchAndCache(supabase);
+    const allResults = [result];
+    console.log(`Fetched: ${result.vehicleCount} vehicles`);
 
     return new Response(JSON.stringify({ ok: true, cycles: allResults }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
