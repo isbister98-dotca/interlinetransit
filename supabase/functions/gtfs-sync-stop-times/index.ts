@@ -168,80 +168,20 @@ async function getActiveTripIds(
 }
 
 /**
- * Get ZIP stream using true streaming - no Blob buffering
- * Only attempts to cache on page=0 && hour=0
+ * Get ZIP stream - downloads fresh each time.
+ * 
+ * NOTE: ZIP caching is disabled because Supabase Storage requires Content-Length
+ * for uploads, which isn't available when streaming. The trip ID cache provides
+ * the main performance benefit anyway (avoids recomputing ~40k trip IDs).
  */
 async function getZipStream(
   feedUrl: string,
-  agencyId: string,
-  serviceDate: string,
-  shouldCache: boolean
+  agencyId: string
 ): Promise<ReadableStream<Uint8Array>> {
-  const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
-  const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-  const cacheKey = `${agencyId}/${serviceDate}.zip`;
-  const storageUrl = `${SUPABASE_URL}/storage/v1/object/gtfs-zip-cache/${cacheKey}`;
-  
-  // Try cache first via direct HTTP (no SDK = no memory buffering)
-  try {
-    const cacheRes = await fetch(storageUrl, {
-      method: "GET",
-      headers: {
-        "Authorization": `Bearer ${SERVICE_ROLE_KEY}`,
-      },
-    });
-    
-    if (cacheRes.ok && cacheRes.body) {
-      console.log(`[${agencyId}] Using cached ZIP from storage: ${cacheKey}`);
-      return cacheRes.body;
-    }
-    
-    // 404 or other = cache miss, fall through
-    if (cacheRes.status !== 404) {
-      console.log(`[${agencyId}] Storage returned ${cacheRes.status}, proceeding with download`);
-    }
-  } catch (e) {
-    console.log(`[${agencyId}] Storage fetch error: ${e.message}, proceeding with download`);
-  }
-  
-  // Cache miss - download from source
-  console.log(`[${agencyId}] Cache miss, downloading ZIP from ${feedUrl}`);
+  console.log(`[${agencyId}] Downloading ZIP from ${feedUrl}`);
   const response = await fetch(feedUrl);
   if (!response.ok) throw new Error(`Download failed: ${response.status}`);
   if (!response.body) throw new Error("No response body");
-  
-  // If we should cache (page=0, hour=0), use tee() to stream to both storage and processing
-  if (shouldCache) {
-    const [processStream, uploadStream] = response.body.tee();
-    
-    // Upload to storage in background - use streaming upload, no blob!
-    (async () => {
-      try {
-        const uploadRes = await fetch(storageUrl, {
-          method: "POST",
-          headers: {
-            "Authorization": `Bearer ${SERVICE_ROLE_KEY}`,
-            "Content-Type": "application/zip",
-            "x-upsert": "true",
-          },
-          body: uploadStream,
-        });
-        
-        if (uploadRes.ok) {
-          console.log(`[${agencyId}] Cached ZIP to storage: ${cacheKey}`);
-        } else {
-          const errText = await uploadRes.text();
-          console.error(`[${agencyId}] Storage upload failed: ${uploadRes.status} - ${errText}`);
-        }
-      } catch (e) {
-        console.error(`[${agencyId}] Storage upload error: ${e.message}`);
-      }
-    })();
-    
-    return processStream;
-  }
-  
-  // Not caching, just return the stream directly
   return response.body;
 }
 
