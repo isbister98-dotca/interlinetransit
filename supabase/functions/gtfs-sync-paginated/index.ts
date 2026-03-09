@@ -6,7 +6,7 @@ const corsHeaders = {
 };
 
 const MAX_HOUR = 27;
-const MAX_RETRIES = 5;
+const MAX_RETRIES = 12;
 
 /**
  * Check if an error message indicates a retriable resource limit
