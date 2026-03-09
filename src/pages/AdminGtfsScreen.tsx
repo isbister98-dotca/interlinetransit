@@ -261,6 +261,40 @@ export default function AdminGtfsScreen() {
     fetchData();
   };
 
+  const syncStopTimesOnly = async (agencyId: string) => {
+    setSyncing(prev => ({ ...prev, [agencyId]: true }));
+
+    // Sync stop_times per day: d0 (today) first, then d1–d6
+    for (const dayOffset of DAY_OFFSETS) {
+      try {
+        let page = 0;
+        while (true) {
+          const result = await callFunction(
+            "gtfs-sync-stop-times",
+            agencyId,
+            `&page=${page}&day_offset=${dayOffset}`
+          );
+          const agencyResult = result?.results?.[agencyId];
+          if (!agencyResult?.hasMore) break;
+          page++;
+        }
+      } catch (e) {
+        console.error(`Error syncing stop_times d${dayOffset} for ${agencyId}:`, e);
+      }
+    }
+
+    // Cleanup (garbage collection)
+    try {
+      await callFunction("gtfs-sync-stop-times-cleanup", agencyId);
+    } catch (e) {
+      console.error(`Error in stop_times cleanup for ${agencyId}:`, e);
+    }
+
+    setSyncing(prev => ({ ...prev, [agencyId]: false }));
+    toast({ title: `Stop times sync complete for ${agencyId}` });
+    fetchData();
+  };
+
   // Group statuses by agency for the stop_times section
   const getAgencyStatuses = (agencyId: string) =>
     syncStatuses.filter(s => s.agency_id === agencyId);
@@ -341,9 +375,23 @@ export default function AdminGtfsScreen() {
                 <Switch checked={feed.is_active} onCheckedChange={() => toggleActive(feed)} />
                 <Button
                   variant="outline"
+                  size="sm"
+                  onClick={() => syncStopTimesOnly(feed.agency_id)}
+                  disabled={syncing[feed.agency_id]}
+                  title="Sync stop_times only (7 days)"
+                >
+                  {syncing[feed.agency_id] ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <span className="text-xs">ST</span>
+                  )}
+                </Button>
+                <Button
+                  variant="outline"
                   size="icon"
                   onClick={() => syncAgency(feed.agency_id)}
                   disabled={syncing[feed.agency_id]}
+                  title="Full sync"
                 >
                   {syncing[feed.agency_id] ? (
                     <Loader2 className="h-4 w-4 animate-spin" />
