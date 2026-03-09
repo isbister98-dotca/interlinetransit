@@ -1,7 +1,7 @@
 
 # GTFS Schedule Data Integration — IMPLEMENTED
 
-## Status: ✅ Complete (v5 - Auto-Retry Architecture)
+## Status: ✅ Complete (v6 - Dual Cache Architecture)
 
 All phases implemented:
 1. ✅ 14 database tables created (12 GTFS data + gtfs_feeds + gtfs_sync_status) with RLS
