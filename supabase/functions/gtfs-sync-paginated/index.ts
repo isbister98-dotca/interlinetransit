@@ -65,16 +65,28 @@ Deno.serve(async (req) => {
     if (fileType === "stop_times") {
       // Hour-by-hour iteration for stop_times
       let currentHour = startHour;
-      let currentPage = currentHour === startHour ? startPage : 0;
+      let currentPage = startPage;
+      // In single_hour mode, only process startHour (used for per-hour retrigger from admin)
+      const maxHour = singleHour ? startHour : MAX_HOUR;
 
-      while (currentHour <= MAX_HOUR) {
+      while (currentHour <= maxHour) {
         if (Date.now() - startTime > TIME_BUDGET_MS) {
           console.log(`[${agencyId}] Time budget exceeded at hour=${currentHour} page=${currentPage}`);
           timedOut = true;
+          // Mark the current in-progress hour as error so it's retriggerable from the admin UI
+          if (!singleHour) {
+            await supabase.from("gtfs_sync_status").upsert({
+              agency_id: agencyId,
+              file_type: `stop_times_d${dayOffset}_h${currentHour}`,
+              status: "error",
+              error_msg: `Timed out at page ${currentPage} — please retrigger`,
+              completed_at: new Date().toISOString(),
+            }, { onConflict: "agency_id,file_type" });
+          }
           break;
         }
 
-        let fnUrl = `${supabaseUrl}/functions/v1/${functionName}?agency_id=${encodeURIComponent(agencyId)}&day_offset=${encodeURIComponent(dayOffset)}&hour=${currentHour}&page=${currentPage}`;
+        const fnUrl = `${supabaseUrl}/functions/v1/${functionName}?agency_id=${encodeURIComponent(agencyId)}&day_offset=${encodeURIComponent(dayOffset)}&hour=${currentHour}&page=${currentPage}`;
 
         const res = await fetch(fnUrl, {
           method: "POST",
@@ -121,17 +133,17 @@ Deno.serve(async (req) => {
         totalRows += agencyResult.rows || 0;
 
         if (agencyResult.hasMore) {
-          // Paginate within this hour
+          // More pages within this hour — continue paginating
           currentPage++;
         } else {
-          // Move to next hour
+          // Hour complete — move to next
           currentHour++;
           currentPage = 0;
         }
       }
 
-      if (timedOut) {
-        // Fire continuation
+      if (timedOut && !singleHour) {
+        // Fire continuation from where we left off (non-single-hour mode only)
         const continuationUrl = `${supabaseUrl}/functions/v1/gtfs-sync-paginated?agency_id=${encodeURIComponent(agencyId)}&file_type=stop_times&day_offset=${encodeURIComponent(dayOffset)}&start_hour=${currentHour}&start_page=${currentPage}`;
 
         console.log(`[${agencyId}] Firing continuation from hour=${currentHour} page=${currentPage}`);
@@ -161,7 +173,7 @@ Deno.serve(async (req) => {
       }
 
       return new Response(
-        JSON.stringify({ ok: true, agency_id: agencyId, file_type: fileType, day_offset: dayOffset, totalRows, hoursProcessed: MAX_HOUR + 1 }),
+        JSON.stringify({ ok: true, agency_id: agencyId, file_type: fileType, day_offset: dayOffset, totalRows, hoursProcessed: singleHour ? 1 : MAX_HOUR + 1 }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
 
