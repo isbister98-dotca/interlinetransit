@@ -401,11 +401,8 @@ Deno.serve(async (req) => {
         let batch: any[] = [];
         let totalRows = 0;
 
-        // Only cache ZIP on first page of first hour (page=0, hour=0 or hour=null)
-        const shouldCacheZip = page === 0 && (targetHour === null || targetHour === 0);
-        
-        // Get ZIP stream (cached or download)
-        const zipStream = await getZipStream(feed.feed_url, agencyId, serviceDate, shouldCacheZip);
+        // Get ZIP stream (downloads fresh each time - trip ID cache provides main perf benefit)
+        const zipStream = await getZipStream(feed.feed_url, agencyId);
         
         await streamProcessZip(zipStream, (line: string) => {
           if (hasMore) return false;
