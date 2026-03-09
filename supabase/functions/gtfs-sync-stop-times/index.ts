@@ -161,6 +161,46 @@ async function getActiveTripIds(
 }
 
 /**
+ * Download ZIP file from URL or storage cache
+ */
+async function getZipStream(feedUrl: string, agencyId: string, serviceDate: string, supabase: any): Promise<ReadableStream<Uint8Array>> {
+  const cacheKey = `${agencyId}/${serviceDate}.zip`;
+  
+  // Try cache first
+  const { data: cached, error: storageError } = await supabase
+    .storage
+    .from(ZIP_CACHE_BUCKET)
+    .download(cacheKey);
+  
+  if (cached && !storageError) {
+    console.log(`[${agencyId}] Using cached ZIP from storage: ${cacheKey}`);
+    return cached.stream();
+  }
+  
+  // Cache miss - download from URL
+  console.log(`[${agencyId}] Cache miss, downloading ZIP from ${feedUrl}`);
+  const response = await fetch(feedUrl);
+  if (!response.ok) throw new Error(`Download failed: ${response.status}`);
+  if (!response.body) throw new Error("No response body");
+  
+  // Clone stream for caching
+  const [cacheStream, processStream] = response.body.tee();
+  
+  // Upload to storage (async, don't wait)
+  (async () => {
+    try {
+      const blob = await new Response(cacheStream).blob();
+      await supabase.storage.from(ZIP_CACHE_BUCKET).upload(cacheKey, blob, { upsert: true });
+      console.log(`[${agencyId}] Cached ZIP to storage: ${cacheKey}`);
+    } catch (e) {
+      console.error(`[${agencyId}] Failed to cache ZIP:`, e.message);
+    }
+  })();
+  
+  return processStream;
+}
+
+/**
  * Parse a single CSV line handling quoted fields
  */
 function parseCsvLine(line: string): string[] {
@@ -194,13 +234,9 @@ function parseCsvLine(line: string): string[] {
  * Stream-process the ZIP file and extract stop_times.txt lines
  */
 async function streamProcessZip(
-  feedUrl: string,
+  zipStream: ReadableStream<Uint8Array>,
   onLine: (line: string) => boolean | void
 ): Promise<void> {
-  const response = await fetch(feedUrl);
-  if (!response.ok) throw new Error(`Download failed: ${response.status}`);
-  if (!response.body) throw new Error("No response body");
-
   return new Promise((resolve, reject) => {
     const decoder = new TextDecoder();
     let lineBuffer = "";
@@ -249,7 +285,7 @@ async function streamProcessZip(
 
     unzip.register(UnzipInflate);
 
-    const reader = response.body.getReader();
+    const reader = zipStream.getReader();
 
     async function pump(): Promise<void> {
       try {
