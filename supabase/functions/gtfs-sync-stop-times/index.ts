@@ -294,8 +294,14 @@ Deno.serve(async (req) => {
         if (!headerParsed) throw new Error("stop_times.txt is empty");
 
         if (batch.length > 0) {
-          const { error } = await supabase.from("gtfs_stop_times").upsert(batch, { onConflict: "agency_id,trip_id,stop_sequence" });
-          if (error) throw error;
+          let attempt = 0;
+          while (attempt < 3) {
+            const { error } = await supabase.from("gtfs_stop_times").upsert(batch, { onConflict: "agency_id,trip_id,stop_sequence" });
+            if (!error) break;
+            attempt++;
+            if (attempt >= 3) throw error;
+            await new Promise(r => setTimeout(r, 1000));
+          }
           totalRows += batch.length;
         }
 
