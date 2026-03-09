@@ -73,11 +73,15 @@ function StopTimesGroup({
   agencyId,
   onRetriggerDay,
   retriggeringDays,
+  onSyncAllDays,
+  syncingAllDays,
 }: {
   statuses: SyncStatus[];
   agencyId: string;
   onRetriggerDay: (agencyId: string, dayOffset: number) => void;
   retriggeringDays: Set<string>;
+  onSyncAllDays: (agencyId: string) => void;
+  syncingAllDays: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const dayStatuses = DAY_OFFSETS.map(d => statuses.find(s => s.file_type === `stop_times_d${d}`) ?? null);
@@ -85,9 +89,10 @@ function StopTimesGroup({
   const allStatuses = [...dayStatuses.filter(Boolean), cleanupStatus].filter(Boolean) as SyncStatus[];
 
   const hasStale = allStatuses.some(s => isStaleRunning(s.status, s.started_at));
+  const hasError = allStatuses.some(s => s.status === "error");
   const overallStatus = hasStale
     ? "stale"
-    : allStatuses.some(s => s.status === "error")
+    : hasError
     ? "error"
     : allStatuses.some(s => s.status === "running")
     ? "running"
@@ -101,6 +106,10 @@ function StopTimesGroup({
     .sort((a, b) => new Date(b.completed_at!).getTime() - new Date(a.completed_at!).getTime())[0];
 
   const dayLabels = ["Today", "Tomorrow", "+2d", "+3d", "+4d", "+5d", "+6d"];
+  const daysNeedingSync = DAY_OFFSETS.filter(i => {
+    const s = dayStatuses[i];
+    return !s || s.status === "error" || isStaleRunning(s.status, s.started_at);
+  });
 
   return (
     <>
@@ -115,13 +124,32 @@ function StopTimesGroup({
           {hasStale && <AlertTriangle className="h-3 w-3 text-warning ml-1" />}
         </td>
         <td className="p-3">
-          {overallStatus === "stale" ? (
-            <Badge className="bg-warning/20 text-warning border-warning/30 flex items-center gap-1 w-fit">
-              <AlertTriangle className="h-3 w-3" /> Stale
-            </Badge>
-          ) : (
-            <StatusBadge status={overallStatus} />
-          )}
+          <div className="flex items-center gap-2">
+            {overallStatus === "stale" ? (
+              <Badge className="bg-warning/20 text-warning border-warning/30 flex items-center gap-1 w-fit">
+                <AlertTriangle className="h-3 w-3" /> Stale
+              </Badge>
+            ) : (
+              <StatusBadge status={overallStatus} />
+            )}
+            {(daysNeedingSync.length > 0 || overallStatus !== "done") && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-6 px-2 text-xs"
+                onClick={(e) => { e.stopPropagation(); onSyncAllDays(agencyId); }}
+                disabled={syncingAllDays}
+                title={`Sync all ${daysNeedingSync.length} missing/stale days sequentially`}
+              >
+                {syncingAllDays ? (
+                  <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                ) : (
+                  <RefreshCw className="h-3 w-3 mr-1" />
+                )}
+                Sync All
+              </Button>
+            )}
+          </div>
         </td>
         <td className="p-3 text-right text-foreground tabular-nums">{totalRows.toLocaleString()}</td>
         <td className="p-3 text-muted-foreground text-xs">
@@ -143,7 +171,7 @@ function StopTimesGroup({
             <td className="p-2">
               <div className="flex items-center gap-2">
                 {s ? <StatusBadge status={s.status} startedAt={s.started_at} /> : <Badge variant="outline">—</Badge>}
-                {(stale || (s && s.status === "error")) && (
+                {(stale || !s || (s && s.status === "error")) && (
                   <Button
                     variant="ghost"
                     size="sm"
@@ -199,6 +227,7 @@ export default function AdminGtfsScreen() {
   const [newFeedUrl, setNewFeedUrl] = useState("");
   const [syncing, setSyncing] = useState<Record<string, boolean>>({});
   const [retriggeringDays, setRetriggeringDays] = useState<Set<string>>(new Set());
+  const [syncingAllDays, setSyncingAllDays] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(true);
   const { toast } = useToast();
   const navigate = useNavigate();
@@ -318,7 +347,6 @@ export default function AdminGtfsScreen() {
   const syncStopTimesOnly = async (agencyId: string) => {
     setSyncing(prev => ({ ...prev, [agencyId]: true }));
 
-    // Sync stop_times per day: d0 (today) first, then d1–d6
     for (const dayOffset of DAY_OFFSETS) {
       try {
         let page = 0;
@@ -332,12 +360,13 @@ export default function AdminGtfsScreen() {
           if (!agencyResult?.hasMore) break;
           page++;
         }
+        // 3s delay between days to avoid concurrency issues
+        await new Promise(r => setTimeout(r, 3000));
       } catch (e) {
         console.error(`Error syncing stop_times d${dayOffset} for ${agencyId}:`, e);
       }
     }
 
-    // Cleanup (garbage collection)
     try {
       await callFunction("gtfs-sync-stop-times-cleanup", agencyId);
     } catch (e) {
@@ -346,6 +375,42 @@ export default function AdminGtfsScreen() {
 
     setSyncing(prev => ({ ...prev, [agencyId]: false }));
     toast({ title: `Stop times sync complete for ${agencyId}` });
+    fetchData();
+  };
+
+  const syncAllDays = async (agencyId: string) => {
+    setSyncingAllDays(prev => ({ ...prev, [agencyId]: true }));
+    
+    for (const dayOffset of DAY_OFFSETS) {
+      try {
+        let page = 0;
+        while (true) {
+          const result = await callFunction(
+            "gtfs-sync-stop-times",
+            agencyId,
+            `&page=${page}&day_offset=${dayOffset}`
+          );
+          const agencyResult = result?.results?.[agencyId];
+          if (!agencyResult?.hasMore) break;
+          page++;
+        }
+        // 5s delay between days to prevent concurrency stalls
+        await new Promise(r => setTimeout(r, 5000));
+        fetchData(); // Refresh status after each day
+      } catch (e) {
+        console.error(`Error syncing ${agencyId} d${dayOffset}:`, e);
+      }
+    }
+
+    // Run cleanup after all days
+    try {
+      await callFunction("gtfs-sync-stop-times-cleanup", agencyId);
+    } catch (e) {
+      console.error(`Error in cleanup for ${agencyId}:`, e);
+    }
+
+    setSyncingAllDays(prev => ({ ...prev, [agencyId]: false }));
+    toast({ title: `All days synced for ${agencyId}` });
     fetchData();
   };
 
@@ -613,6 +678,8 @@ export default function AdminGtfsScreen() {
                           statuses={stopTimesStatuses(agencyId)}
                           onRetriggerDay={retriggerDay}
                           retriggeringDays={retriggeringDays}
+                          onSyncAllDays={syncAllDays}
+                          syncingAllDays={!!syncingAllDays[agencyId]}
                         />
                       )}
                     </>

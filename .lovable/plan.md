@@ -1,46 +1,40 @@
 
 # GTFS Schedule Data Integration — IMPLEMENTED
 
-## Status: ✅ Complete (v2 - Daily Workflow Architecture)
+## Status: ✅ Complete (v3 - Staggered Reliability Architecture)
 
 All phases implemented:
 1. ✅ 14 database tables created (12 GTFS data + gtfs_feeds + gtfs_sync_status) with RLS
-2. ✅ 4 initial feeds seeded (GO, UP, TTC, MiWay)
+2. ✅ 4 initial feeds seeded (GO, UP, MiWay, TTC)
 3. ✅ 8 edge functions deployed (agency, calendar, routes, stops, trips, shapes, transfers, stop-times)
 4. ✅ Admin page at /admin/gtfs with feed management + sync status
-5. ✅ **NEW:** Daily 7-workflow stop_times architecture with per-day syncs
+5. ✅ Daily 7-workflow stop_times architecture with per-day syncs
+6. ✅ **NEW v3:** Heavy stagger cron schedule (5-10 min gaps), sequential Sync All Days button
 
-## Architecture (v2)
+## Architecture (v3)
 
-### Daily Stop Times Workflow
+### Daily Stop Times Cron Schedule (UTC)
 ```text
-Midnight daily (5:00 UTC / ~midnight ET)
-├── 00:00 → stop_times day_offset=0  (TODAY - highest priority)
-├── 00:05 → stop_times day_offset=1  (tomorrow)
-├── 00:10 → stop_times day_offset=2
-├── 00:15 → stop_times day_offset=3
-├── 00:20 → stop_times day_offset=4
-├── 00:25 → stop_times day_offset=5
-├── 00:30 → stop_times day_offset=6
-└── 00:40 → stop_times cleanup (GC - garbage collection)
+d0: GO 4:00, UP 4:05, MiWay 4:10, TTC 4:20
+d1: GO 4:30, UP 4:35, MiWay 4:40, TTC 4:50
+d2: GO 5:00, UP 5:05, MiWay 5:10, TTC 5:20
+d3: GO 5:30, UP 5:35, MiWay 5:40, TTC 5:50
+d4: GO 6:00, UP 6:05, MiWay 6:10, TTC 6:20
+d5: GO 6:30, UP 6:35, MiWay 6:40, TTC 6:50
+d6: GO 7:00, UP 7:05, MiWay 7:10, TTC 7:20
+cleanup: GO 7:30, UP 7:35, MiWay 7:40, TTC 7:50
 ```
 
-### Key Changes from v1
-- **Single-day processing**: Each invocation builds `activeTripIds` for ONE day (~1/7th memory)
-- **Decoupled GC**: Garbage collection runs separately after all days complete
-- **No race conditions**: Per-day syncs only upsert; cleanup only deletes
-- **Today-first**: day_offset=0 runs at midnight ensuring freshest schedule data
+### Key Changes from v2
+- **Heavy stagger**: 5-10 min gaps between agencies, never >1 concurrent sync
+- **TTC gets 10 min extra**: 10-min gap before TTC (largest dataset) to ensure prior agency finishes
+- **Paginated wrapper**: Self-continuing with 120s time budget and auto-continuation
+- **Stale detection**: 10-min threshold marks zombie syncs, admin can re-trigger
+- **Sync All Days button**: Sequential d0-d6 with 5s delays between days + cleanup
 
-### Status Tracking
-- `stop_times_d0` through `stop_times_d6` - per-day sync status
-- `stop_times_cleanup` - garbage collection status
-- Admin UI shows expandable grouped view for all 8 statuses
-
-## Cron Schedule
-- **Weekly (Monday 3am ET)**: agency, calendar, routes, stops, trips, shapes, transfers
-- **Daily (midnight ET)**: stop_times d0-d6 + cleanup (32 jobs: 8 slots × 4 agencies)
-
-## Edge Functions
-- `gtfs-sync-stop-times` - accepts `day_offset=0-6` param, processes single day
-- `gtfs-sync-stop-times-cleanup` - builds 7-day union, runs garbage collection
-- `gtfs-sync-paginated` - wrapper that chains pages, forwards `day_offset`
+### Admin Panel Features
+- Sync Health dashboard with per-agency status cards
+- Expandable stop_times group showing all 7 days + cleanup
+- Per-day re-trigger buttons for stale/error entries
+- "Sync All" button per agency for sequential full re-sync
+- Stale detection (>10min running = zombie)
