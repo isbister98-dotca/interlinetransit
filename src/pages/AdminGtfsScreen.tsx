@@ -71,23 +71,29 @@ function StatusBadge({ status, startedAt }: { status: string; startedAt?: string
 function StopTimesGroup({
   statuses,
   agencyId,
+  onRetriggerDay,
+  retriggeringDays,
 }: {
   statuses: SyncStatus[];
   agencyId: string;
+  onRetriggerDay: (agencyId: string, dayOffset: number) => void;
+  retriggeringDays: Set<string>;
 }) {
   const [expanded, setExpanded] = useState(false);
   const dayStatuses = DAY_OFFSETS.map(d => statuses.find(s => s.file_type === `stop_times_d${d}`) ?? null);
   const cleanupStatus = statuses.find(s => s.file_type === "stop_times_cleanup") ?? null;
   const allStatuses = [...dayStatuses.filter(Boolean), cleanupStatus].filter(Boolean) as SyncStatus[];
 
-  const overallStatus =
-    allStatuses.some(s => s.status === "error")
-      ? "error"
-      : allStatuses.some(s => s.status === "running")
-      ? "running"
-      : allStatuses.length > 0 && allStatuses.every(s => s.status === "done")
-      ? "done"
-      : "pending";
+  const hasStale = allStatuses.some(s => isStaleRunning(s.status, s.started_at));
+  const overallStatus = hasStale
+    ? "stale"
+    : allStatuses.some(s => s.status === "error")
+    ? "error"
+    : allStatuses.some(s => s.status === "running")
+    ? "running"
+    : allStatuses.length > 0 && allStatuses.every(s => s.status === "done")
+    ? "done"
+    : "pending";
 
   const totalRows = allStatuses.reduce((acc, s) => acc + (s.row_count || 0), 0);
   const lastCompleted = allStatuses
@@ -106,38 +112,71 @@ function StopTimesGroup({
         <td className="p-3 font-mono text-xs text-foreground flex items-center gap-1">
           {expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
           stop_times (7d)
+          {hasStale && <AlertTriangle className="h-3 w-3 text-warning ml-1" />}
         </td>
-        <td className="p-3"><StatusBadge status={overallStatus} /></td>
+        <td className="p-3">
+          {overallStatus === "stale" ? (
+            <Badge className="bg-warning/20 text-warning border-warning/30 flex items-center gap-1 w-fit">
+              <AlertTriangle className="h-3 w-3" /> Stale
+            </Badge>
+          ) : (
+            <StatusBadge status={overallStatus} />
+          )}
+        </td>
         <td className="p-3 text-right text-foreground tabular-nums">{totalRows.toLocaleString()}</td>
         <td className="p-3 text-muted-foreground text-xs">
           {lastCompleted?.completed_at ? new Date(lastCompleted.completed_at).toLocaleString() : "—"}
         </td>
       </tr>
 
-      {expanded && dayStatuses.map((s, i) => (
-        <tr key={`d${i}`} className="border-b border-border/50 bg-muted/10">
-          <td className="p-2 pl-6 text-muted-foreground text-xs"></td>
-          <td className="p-2 font-mono text-xs text-muted-foreground">
-            <span className={i === 0 ? "text-primary font-semibold" : ""}>
-              {dayLabels[i]} (d{i})
-            </span>
-          </td>
-          <td className="p-2">{s ? <StatusBadge status={s.status} /> : <Badge variant="outline">—</Badge>}</td>
-          <td className="p-2 text-right text-muted-foreground text-xs tabular-nums">
-            {s?.row_count?.toLocaleString() ?? "—"}
-          </td>
-          <td className="p-2 text-muted-foreground text-xs">
-            {s?.completed_at ? new Date(s.completed_at).toLocaleString() : "—"}
-            {s?.error_msg && <p className="text-destructive mt-0.5">{s.error_msg}</p>}
-          </td>
-        </tr>
-      ))}
+      {expanded && dayStatuses.map((s, i) => {
+        const stale = s ? isStaleRunning(s.status, s.started_at) : false;
+        const retriggering = retriggeringDays.has(`${agencyId}-d${i}`);
+        return (
+          <tr key={`d${i}`} className={`border-b border-border/50 ${stale ? "bg-warning/5" : "bg-muted/10"}`}>
+            <td className="p-2 pl-6 text-muted-foreground text-xs"></td>
+            <td className="p-2 font-mono text-xs text-muted-foreground">
+              <span className={i === 0 ? "text-primary font-semibold" : ""}>
+                {dayLabels[i]} (d{i})
+              </span>
+            </td>
+            <td className="p-2">
+              <div className="flex items-center gap-2">
+                {s ? <StatusBadge status={s.status} startedAt={s.started_at} /> : <Badge variant="outline">—</Badge>}
+                {(stale || (s && s.status === "error")) && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 px-2 text-xs"
+                    onClick={(e) => { e.stopPropagation(); onRetriggerDay(agencyId, i); }}
+                    disabled={retriggering}
+                  >
+                    {retriggering ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
+                  </Button>
+                )}
+              </div>
+            </td>
+            <td className="p-2 text-right text-muted-foreground text-xs tabular-nums">
+              {s?.row_count?.toLocaleString() ?? "—"}
+            </td>
+            <td className="p-2 text-muted-foreground text-xs">
+              {s?.completed_at ? new Date(s.completed_at).toLocaleString() : "—"}
+              {s?.error_msg && <p className="text-destructive mt-0.5">{s.error_msg}</p>}
+              {stale && s?.started_at && (
+                <p className="text-warning mt-0.5">
+                  Started {Math.round((Date.now() - new Date(s.started_at).getTime()) / 60000)}m ago — likely timed out
+                </p>
+              )}
+            </td>
+          </tr>
+        );
+      })}
 
       {expanded && (
         <tr className="border-b border-border/50 bg-muted/10">
           <td className="p-2 pl-6 text-muted-foreground text-xs"></td>
           <td className="p-2 font-mono text-xs text-muted-foreground">cleanup (GC)</td>
-          <td className="p-2">{cleanupStatus ? <StatusBadge status={cleanupStatus.status} /> : <Badge variant="outline">—</Badge>}</td>
+          <td className="p-2">{cleanupStatus ? <StatusBadge status={cleanupStatus.status} startedAt={cleanupStatus.started_at} /> : <Badge variant="outline">—</Badge>}</td>
           <td className="p-2 text-right text-muted-foreground text-xs tabular-nums">
             {cleanupStatus?.row_count?.toLocaleString() ?? "—"}
           </td>
