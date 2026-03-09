@@ -275,9 +275,15 @@ Deno.serve(async (req) => {
             timepoint: idxTimepoint >= 0 && vals[idxTimepoint]?.trim() ? parseInt(vals[idxTimepoint].trim()) : null,
           });
 
-          if (batch.length >= 2000) {
-            const { error } = await supabase.from("gtfs_stop_times").upsert(batch, { onConflict: "agency_id,trip_id,stop_sequence" });
-            if (error) throw error;
+          if (batch.length >= 500) {
+            let attempt = 0;
+            while (attempt < 3) {
+              const { error } = await supabase.from("gtfs_stop_times").upsert(batch, { onConflict: "agency_id,trip_id,stop_sequence" });
+              if (!error) break;
+              attempt++;
+              if (attempt >= 3) throw error;
+              await new Promise(r => setTimeout(r, 1000));
+            }
             totalRows += batch.length;
             batch = [];
           }
