@@ -458,7 +458,8 @@ export default function AdminGtfsScreen() {
     const key = `${agencyId}-d${dayOffset}-h${hour}`;
     setRetriggeringHours(prev => new Set(prev).add(key));
     try {
-      await callFunction("gtfs-sync-stop-times", agencyId, `&day_offset=${dayOffset}&hour=${hour}&page=0`);
+      // Use paginated wrapper with single_hour=true so it handles multi-page hours (e.g. TTC h8 > 10k rows)
+      await callFunction("gtfs-sync-paginated", agencyId, `&file_type=stop_times&day_offset=${dayOffset}&start_hour=${hour}&single_hour=true`);
       toast({ title: `Re-synced ${agencyId} d${dayOffset} h${hour}` });
     } catch (e) {
       console.error(`Error retriggering ${agencyId} d${dayOffset} h${hour}:`, e);
