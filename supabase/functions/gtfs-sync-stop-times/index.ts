@@ -6,9 +6,15 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-const PAGE_SIZE = 10000;
+// Agency-specific page sizes to handle large feeds
+const AGENCY_PAGE_SIZES: Record<string, number> = {
+  TTC: 5000,    // TTC has ~1.2M stop_times, use smaller pages
+  MiWay: 7500,  // MiWay has ~442k, moderate size
+};
+const DEFAULT_PAGE_SIZE = 10000;
+
 const BATCH_SIZE = 200;
-const CPU_BUDGET_MS = 50_000;
+const CPU_BUDGET_MS = 45_000; // Reduced from 50s to leave margin
 
 /**
  * Get active service IDs for a SINGLE day (today + day_offset).
@@ -67,6 +73,7 @@ async function getActiveServiceIds(
 
 /**
  * Get all active trip IDs for the given service IDs
+ * Optimized with smaller batch sizes for large agencies
  */
 async function getActiveTripIds(
   supabase: any,
@@ -76,20 +83,29 @@ async function getActiveTripIds(
   const tripIds = new Set<string>();
   const serviceArr = Array.from(serviceIds);
 
-  for (let i = 0; i < serviceArr.length; i += 100) {
-    const batch = serviceArr.slice(i, i + 100);
+  // Use smaller service batches for more responsive queries
+  const serviceBatchSize = 50; // Reduced from 100
+  const rowBatchSize = 500;    // Reduced from 1000
+
+  for (let i = 0; i < serviceArr.length; i += serviceBatchSize) {
+    const batch = serviceArr.slice(i, i + serviceBatchSize);
     let offset = 0;
     while (true) {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("gtfs_trips")
         .select("trip_id")
         .eq("agency_id", agencyId)
         .in("service_id", batch)
-        .range(offset, offset + 999);
+        .range(offset, offset + rowBatchSize - 1);
+      
+      if (error) {
+        console.error(`[${agencyId}] Error fetching trips:`, error.message);
+        break;
+      }
       if (!data || data.length === 0) break;
       for (const t of data) tripIds.add(t.trip_id);
-      if (data.length < 1000) break;
-      offset += 1000;
+      if (data.length < rowBatchSize) break;
+      offset += rowBatchSize;
     }
   }
 
@@ -265,6 +281,9 @@ Deno.serve(async (req) => {
 
     for (const feed of feeds || []) {
       const agencyId = feed.agency_id;
+      
+      // Get agency-specific page size
+      const PAGE_SIZE = AGENCY_PAGE_SIZES[agencyId] ?? DEFAULT_PAGE_SIZE;
 
       if (page === 0) {
         await supabase.from("gtfs_sync_status").upsert({
@@ -294,8 +313,11 @@ Deno.serve(async (req) => {
           continue;
         }
 
+        const tripFetchStart = Date.now();
         const activeTripIds = await getActiveTripIds(supabase, agencyId, serviceIds);
-        console.log(`[${agencyId}] d${dayOffset} h=${targetHour ?? "all"} page=${page}: ${serviceIds.size} services, ${activeTripIds.size} trips`);
+        const tripFetchMs = Date.now() - tripFetchStart;
+        
+        console.log(`[${agencyId}] d${dayOffset} h=${targetHour ?? "all"} page=${page}: ${serviceIds.size} services, ${activeTripIds.size} trips (fetched in ${tripFetchMs}ms)`);
 
         if (activeTripIds.size === 0) {
           await supabase.from("gtfs_sync_status").upsert({
