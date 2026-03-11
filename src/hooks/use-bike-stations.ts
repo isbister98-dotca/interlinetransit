@@ -70,9 +70,10 @@ export function useBikeStations() {
     "bike-stations",
     fetchBikeStations,
     {
-      refreshInterval: 60_000,
-      fallbackData: [],
-      revalidateOnFocus: false,
+    refreshInterval: 300_000, // 5 min
+    fallbackData: [],
+    revalidateOnFocus: false,
+    revalidateOnReconnect: false,
     }
   );
 
