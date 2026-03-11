@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import L from "leaflet";
-import { Route, Train, Sparkles, X } from "lucide-react";
+import { Route, Train, Sparkles, X, Bike } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { MOCK_DEPARTURES } from "@/lib/mock-data";
 import { AGENCY_COLORS, type Vehicle } from "@/lib/types";
@@ -9,12 +9,14 @@ import { DepartureRow } from "@/components/transit/DepartureRow";
 import { useVehicles } from "@/hooks/use-vehicles";
 import { useRouteShapes, getRouteDisplayColor } from "@/hooks/use-route-shapes";
 import { useStops, type GtfsStop } from "@/hooks/use-stops";
+import { useBikeStations, type BikeStation } from "@/hooks/use-bike-stations";
 import { SearchBar } from "@/components/map/SearchBar";
 import { SheetPlaceDetail } from "@/components/map/SheetPlaceDetail";
 import { SheetRouteDetail } from "@/components/map/SheetRouteDetail";
 import { SheetStationDetail } from "@/components/map/SheetStationDetail";
 import { SheetStopDetail } from "@/components/map/SheetStopDetail";
 import { SheetVehicleDetail } from "@/components/map/SheetVehicleDetail";
+import { SheetBikeStationDetail } from "@/components/map/SheetBikeStationDetail";
 import {
   type SearchResult,
   type PlaceResult,
@@ -154,11 +156,39 @@ function createGtfsStopIcon() {
   });
 }
 
-type SheetMode = "nearby" | "place" | "route" | "station" | "vehicle" | "stop" | "hidden";
-type LayerMode = "routes" | "vehicles" | "everything" | "off";
+// Bike station marker — shows bike icon + count, colored by availability
+const BIKE_SVG = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5.5" cy="17.5" r="3.5"/><circle cx="18.5" cy="17.5" r="3.5"/><path d="M15 6a1 1 0 1 0 0-2 1 1 0 0 0 0 2zm-3 11.5V14l-3-3 4-3 2 3h2"/></svg>`;
+
+function createBikeStationIcon(station: BikeStation) {
+  const count = station.num_bikes_available;
+  const bgColor = count === 0
+    ? "hsl(0,0%,35%)"                // grey — no bikes
+    : "hsl(93,50%,56%)";              // primary green
+  const textColor = "#0e0f0d";
+
+  return L.divIcon({
+    className: "bike-station-marker",
+    html: `<div style="
+      display: flex; align-items: center; gap: 3px;
+      background: ${bgColor}; color: ${textColor};
+      font-size: 10px; font-weight: 700;
+      font-family: 'IBM Plex Mono', monospace;
+      padding: 3px 7px 3px 5px; border-radius: 8px;
+      white-space: nowrap;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+      pointer-events: auto; cursor: pointer;
+    ">${BIKE_SVG}<span>${count}</span></div>`,
+    iconSize: [50, 24],
+    iconAnchor: [25, 12],
+  });
+}
+
+type SheetMode = "nearby" | "place" | "route" | "station" | "vehicle" | "stop" | "bike" | "hidden";
+type LayerMode = "routes" | "vehicles" | "everything" | "bikes" | "off";
 
 const DEFAULT_ZOOM = 14;
 const STOP_MIN_ZOOM = 14; // Only show stops at this zoom or more
+const BIKE_MIN_ZOOM = 13;
 
 export default function MapScreen() {
   const [layerMode, setLayerMode] = useState<LayerMode>("vehicles");
@@ -181,6 +211,7 @@ export default function MapScreen() {
   const [selectedStation, setSelectedStation] = useState<StationResult | null>(null);
   const [selectedVehicle, setSelectedVehicle] = useState<Vehicle | null>(null);
   const [selectedStop, setSelectedStop] = useState<GtfsStop | null>(null);
+  const [selectedBikeStation, setSelectedBikeStation] = useState<BikeStation | null>(null);
 
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
@@ -188,6 +219,7 @@ export default function MapScreen() {
   const shapesLayerRef = useRef<L.LayerGroup | null>(null);
   const overlayLayerRef = useRef<L.LayerGroup | null>(null);
   const stopsLayerRef = useRef<L.LayerGroup | null>(null);
+  const bikeLayerRef = useRef<L.LayerGroup | null>(null);
   const vehiclesRef = useRef<Vehicle[]>([]);
   const layerModeRef = useRef<LayerMode>("vehicles");
   const showLayersRef = useRef(true);
@@ -201,6 +233,7 @@ export default function MapScreen() {
   const { vehicles } = useVehicles();
   const { shapes } = useRouteShapes();
   const { stops: gtfsStops } = useStops();
+  const { stations: bikeStations } = useBikeStations();
   vehiclesRef.current = vehicles;
   layerModeRef.current = layerMode;
   showLayersRef.current = layerMode === "vehicles" || layerMode === "everything";
@@ -224,6 +257,7 @@ export default function MapScreen() {
     setSelectedStation(null);
     setSelectedVehicle(null);
     setSelectedStop(null);
+    setSelectedBikeStation(null);
     setPlaceDistance(undefined);
     setPlaceDuration(undefined);
     setRouteGeometry(null);
@@ -324,6 +358,19 @@ export default function MapScreen() {
     const map = mapRef.current;
     if (map) {
       map.flyTo([stop.stop_lat, stop.stop_lon], Math.max(map.getZoom(), 15), { duration: 0.8 });
+    }
+  }, [clearOverlays]);
+
+  // Handle bike station marker click
+  const handleBikeStationClick = useCallback((station: BikeStation) => {
+    clearOverlays();
+    setSelectedBikeStation(station);
+    setSheetMode("bike");
+    setSheetExpanded(false);
+
+    const map = mapRef.current;
+    if (map) {
+      map.flyTo([station.lat, station.lon], Math.max(map.getZoom(), 16), { duration: 0.8 });
     }
   }, [clearOverlays]);
 
@@ -481,6 +528,43 @@ export default function MapScreen() {
   }, [gtfsStops, handleStopClick]);
 
 
+  // Sync bike station markers
+  const syncBikeStations = useCallback(() => {
+    const layer = bikeLayerRef.current;
+    const map = mapRef.current;
+    if (!layer || !map) return;
+
+    const showBikes = layerModeRef.current === "bikes" || layerModeRef.current === "everything";
+    const zoom = map.getZoom();
+
+    if (!showBikes || zoom < BIKE_MIN_ZOOM) {
+      layer.clearLayers();
+      return;
+    }
+
+    layer.clearLayers();
+    const bounds = map.getBounds();
+
+    bikeStations.forEach((station) => {
+      if (!bounds.contains([station.lat, station.lon])) return;
+      const marker = L.marker([station.lat, station.lon], {
+        icon: createBikeStationIcon(station),
+        interactive: true,
+      });
+      marker.on("click", (e: L.LeafletMouseEvent) => {
+        L.DomEvent.stopPropagation(e);
+        handleBikeStationClick(station);
+      });
+      marker.bindTooltip(station.name, {
+        className: "dark-popup",
+        direction: "top",
+        offset: [0, -6],
+      });
+      marker.addTo(layer);
+    });
+  }, [bikeStations, handleBikeStationClick]);
+
+
   useEffect(() => {
     if (!mapContainerRef.current || mapRef.current) return;
 
@@ -501,16 +585,18 @@ export default function MapScreen() {
     const vehicleLayer = L.layerGroup().addTo(map);
     const shapesLayer = L.layerGroup().addTo(map);
     const stopsLayer = L.layerGroup().addTo(map);
+    const bikeLayer = L.layerGroup().addTo(map);
     const overlayLayer = L.layerGroup().addTo(map);
     mapRef.current = map;
     vehicleLayerRef.current = vehicleLayer;
     shapesLayerRef.current = shapesLayer;
     stopsLayerRef.current = stopsLayer;
+    bikeLayerRef.current = bikeLayer;
     overlayLayerRef.current = overlayLayer;
 
     map.on("click", (e: L.LeafletMouseEvent) => handleMapClick(e));
-    map.on("zoomend", () => { syncMarkers(); syncStops(); });
-    map.on("moveend", () => { syncStops(); });
+    map.on("zoomend", () => { syncMarkers(); syncStops(); syncBikeStations(); });
+    map.on("moveend", () => { syncStops(); syncBikeStations(); });
 
     // Fix tile loading by ensuring map knows its container size
     requestAnimationFrame(() => map.invalidateSize());
@@ -518,6 +604,7 @@ export default function MapScreen() {
 
     syncMarkers();
     syncStops();
+    syncBikeStations();
 
     return () => {
       clearTimeout(resizeTimer);
@@ -526,9 +613,10 @@ export default function MapScreen() {
       vehicleLayerRef.current = null;
       shapesLayerRef.current = null;
       stopsLayerRef.current = null;
+      bikeLayerRef.current = null;
       overlayLayerRef.current = null;
     };
-  }, [syncMarkers, syncStops, handleMapClick]);
+  }, [syncMarkers, syncStops, syncBikeStations, handleMapClick]);
 
   // Re-sync stops when data loads
   useEffect(() => {
@@ -536,6 +624,11 @@ export default function MapScreen() {
       syncStops();
     }
   }, [gtfsStops, syncStops]);
+
+  // Re-sync bike stations when data loads or layer changes
+  useEffect(() => {
+    syncBikeStations();
+  }, [bikeStations, layerMode, syncBikeStations]);
 
   // Sync vehicles on data/mode change
   useEffect(() => {
@@ -600,6 +693,7 @@ export default function MapScreen() {
         {([
           { mode: "routes" as LayerMode, icon: Route, label: "Routes" },
           { mode: "vehicles" as LayerMode, icon: Train, label: "Vehicles" },
+          { mode: "bikes" as LayerMode, icon: Bike, label: "Bikes" },
           { mode: "everything" as LayerMode, icon: Sparkles, label: "All" },
         ]).map(({ mode, icon: Icon, label }) => (
           <button
@@ -641,8 +735,8 @@ export default function MapScreen() {
           "absolute left-0 right-0 z-[1000] bg-surface-1 rounded-t-xl border-t border-border transition-all duration-300 ease-out",
           isSheetVisible
             ? sheetExpanded
-              ? (sheetMode === "vehicle" || sheetMode === "place") ? "bottom-0 max-h-[85%]" : "bottom-0 h-[70%]"
-              : (sheetMode === "vehicle" || sheetMode === "place") ? "bottom-0" : "bottom-0 h-[30%]"
+              ? (sheetMode === "vehicle" || sheetMode === "place" || sheetMode === "bike") ? "bottom-0 max-h-[85%]" : "bottom-0 h-[70%]"
+              : (sheetMode === "vehicle" || sheetMode === "place" || sheetMode === "bike") ? "bottom-0" : "bottom-0 h-[30%]"
             : "bottom-0 h-0 overflow-hidden"
         )}
       >
@@ -713,6 +807,14 @@ export default function MapScreen() {
               {/* Stop detail */}
               {sheetMode === "stop" && selectedStop && (
                 <SheetStopDetail stop={selectedStop} />
+              )}
+
+              {/* Bike station detail */}
+              {sheetMode === "bike" && selectedBikeStation && (
+                <SheetBikeStationDetail
+                  station={selectedBikeStation}
+                  onClose={resetSheet}
+                />
               )}
             </div>
           </>
